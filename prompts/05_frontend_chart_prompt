@@ -1,0 +1,16 @@
+请生成一个 React + Vite 前端页面，使用 ECharts。
+
+要求：
+1. 主图展示 BTC 价格线
+2. 同图叠加多个交易所 volume 线
+3. 左轴 price，右轴 volume
+4. 支持时间范围切换
+5. 支持交易所多选
+6. 支持 total / spot / futures 切换
+7. 主图下方显示事件流
+8. 点击事件展示摘要卡片
+9. 深色 dashboard 风格
+10. 代码组件化，方便后续增加解释卡片
+
+接口定义如下：
+[粘贴 API contract]
