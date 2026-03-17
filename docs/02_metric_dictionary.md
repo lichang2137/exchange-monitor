@@ -58,3 +58,12 @@
 
 ## 11. 事件与图表关系
 事件默认按 event_time 映射到图表时间轴位置，不做复杂因果推断。
+
+# Visual Style v0.1
+
+## 12. Exchange Color Mapping
+- Binance: #F0B90B
+- OKX: #1E3A8A
+- Bybit: #F97316
+- Bitget: #38BDF8
+- Hyperliquid: #22C55E
