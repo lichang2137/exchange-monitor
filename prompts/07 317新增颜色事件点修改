@@ -1,0 +1,30 @@
+请不要重写整个项目，只做局部修改，并保持现有页面结构不变。
+
+本次只修改以下 3 点：
+
+1. 在主图（K线/时间轴图）上增加事件点 marker
+- 事件点根据事件时间映射到图表横轴
+- 鼠标 hover 时显示事件标题、时间、事件类型
+- 点击事件点后，下方事件流高亮对应事件
+- 如果高亮不方便，至少先支持点击后滚动定位到对应事件卡片
+
+2. 固定交易所颜色
+请统一使用以下颜色：
+- Binance：黄色 #F0B90B
+- OKX：深蓝 #1E3A8A
+- Bybit：橘色 #F97316
+- Bitget：天蓝 #38BDF8
+- Hyperliquid：绿色 #22C55E
+
+3. 在事件流顶部增加事件类型筛选
+- 至少支持：
+  all / announcement / listing / delisting / campaign / fee_change / product_launch / vip_policy / wallet_issue / compliance / partnership / macro / social_hype
+- 点击某一项后，只显示对应事件
+- 默认显示 all
+- 当前激活项要有明显高亮样式
+
+要求：
+- 尽量局部修改
+- 不删除现有功能
+- 输出修改后的完整文件
+- 如果需要增加 mock data 字段，也请一并补充
