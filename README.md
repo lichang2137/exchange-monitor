@@ -1,32 +1,12 @@
-# exchange-monitor
-exchange-monitor/
-├── README.md
-├── docs/
-│   ├── 01_prd.md
-│   ├── 02_metric_dictionary.md
-│   ├── 03_event_taxonomy.md
-│   ├── 04_page_interactions.md
-│   ├── 05_data_sources.md
-│   ├── 06_api_contract.md
-│   ├── 07_openclaw_prompts.md
-│   └── 08_change_log.md
-├── prompts/
-│   ├── 01_prd_expand_prompt.md
-│   ├── 02_mockup_prompt.md
-│   ├── 03_backend_schema_prompt.md
-│   ├── 04_frontend_chart_prompt.md
-│   ├── 05_event_parser_prompt.md
-│   └── 06_iteration_prompt.md
-├── data/
-│   ├── mock/
-│   │   ├── btc_price_mock.json
-│   │   ├── exchange_volume_mock.json
-│   │   └── events_mock.json
-│   └── samples/
-│       └── field_examples.md
-├── app/
-│   ├── frontend/
-│   └── backend/
-└── assets/
-    ├── screenshots/
-    └── wireframes/
+项目名称：Exchange Monitor
+
+目标：
+做一个交易所竞品监控网页，主图以时间为横轴，BTC 价格为主线，可叠加 Binance、OKX、Bybit、Bitget、Hyperliquid 等竞品在现货和合约业务线的交易量变化。下方展示对应时间点的动态事件，包括公告、活动、上币、产品更新、社媒热点和行业新闻，并能辅助解释量变原因。
+
+MVP 范围：
+1. 主图：BTC 价格 + 交易所交易量多曲线
+2. 支持切换总量/现货/合约
+3. 支持勾选不同交易所
+4. 下方展示时间对应事件流
+5. 支持事件分类筛选
+6. 支持点击事件后展示摘要
