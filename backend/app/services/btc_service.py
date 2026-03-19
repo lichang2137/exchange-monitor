@@ -1,6 +1,6 @@
 """
 BTC 价格数据服务
-使用多个公开免费 API 获取真实 BTC 价格数据
+使用 OKX API 获取真实 BTC 价格数据
 """
 import requests
 from datetime import datetime, timedelta
@@ -8,22 +8,79 @@ from typing import List, Dict, Optional
 import time
 import json
 import os
+import subprocess
+import re
 
 # 缓存配置
 BTC_CACHE_FILE = "/tmp/btc_price_cache.json"
 BTC_CACHE_DURATION = 300  # 5分钟缓存
 
 
+def fetch_btc_prices_okx(hours: int = 168) -> List[Dict]:
+    """
+    从 OKX 获取 BTC 价格数据
+    使用 okx CLI 命令
+    """
+    try:
+        # 使用 OKX CLI 获取 K 线数据
+        result = subprocess.run(
+            ["okx", "market", "candles", "BTC-USDT", "--bar", "1H", "--limit", str(min(hours, 168))],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode != 0:
+            print(f"OKX CLI error: {result.stderr}")
+            return []
+        
+        # 解析输出
+        lines = result.stdout.strip().split('\n')
+        if len(lines) < 2:
+            return []
+        
+        result_list = []
+        
+        # 从数据行开始解析（跳过表头）
+        for line in lines[1:]:
+            # 使用正则提取数据
+            # 格式: 3/19/2026, 8:00:00 AM   71253.1  71325.9  71051    71085.5  123.6371518
+            match = re.match(r'(\d{1,2}/\d{1,2}/\d{4}),\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)', line)
+            if match:
+                date_str = match.group(1)
+                time_str = match.group(2)
+                close_price = float(match.group(6))
+                
+                # 解析时间
+                dt_str = f"{date_str} {time_str}"
+                dt = datetime.strptime(dt_str, "%m/%d/%Y %I:%M:%S %p")
+                # 转换为 UTC (OKX 时间是 UTC+8)
+                dt = dt - timedelta(hours=8)
+                
+                result_list.append({
+                    "ts": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "value": round(close_price, 2),
+                    "source": "okx"
+                })
+        
+        # 反转顺序（从旧到新）
+        result_list.reverse()
+        return result_list
+        
+    except Exception as e:
+        print(f"OKX API 失败: {e}")
+        return []
+
+
 def fetch_btc_prices_coingecko(hours: int = 168) -> List[Dict]:
     """
-    从 CoinGecko 获取 BTC 价格数据（免费，无需 API Key）
-    时间粒度：1天（免费版限制）
+    从 CoinGecko 获取 BTC 价格数据（备用）
     """
     url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
     params = {
         "vs_currency": "usd",
-        "days": min(hours // 24 + 1, 90),  # 免费版最多90天
-        "interval": "hourly" if hours <= 24 * 90 else "daily"
+        "days": min(hours // 24 + 1, 7),  # 免费版最多7天
+        "interval": "hourly"
     }
     
     try:
@@ -36,7 +93,8 @@ def fetch_btc_prices_coingecko(hours: int = 168) -> List[Dict]:
             dt = datetime.utcfromtimestamp(ts / 1000)
             result.append({
                 "ts": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "value": round(price, 2)
+                "value": round(price, 2),
+                "source": "coingecko"
             })
         
         return result
@@ -46,137 +104,14 @@ def fetch_btc_prices_coingecko(hours: int = 168) -> List[Dict]:
         return []
 
 
-def fetch_btc_prices_binance(hours: int = 168) -> List[Dict]:
-    """
-    从 Binance 获取 BTC 价格数据
-    """
-    # 使用较新的时间参数
-    end_time = int(datetime.utcnow().timestamp() * 1000)
-    start_time = end_time - (hours * 60 * 60 * 1000)
-    
-    url = "https://api.binance.com/api/v3/klines"
-    params = {
-        "symbol": "BTCUSDT",
-        "interval": "1h",
-        "startTime": start_time,
-        "endTime": end_time,
-        "limit": 1000
-    }
-    
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        
-        # 451 表示地区限制
-        if response.status_code == 451:
-            print("Binance API 451 错误，尝试备用 endpoint")
-            # 尝试使用 api2.binance.com
-            url = "https://api2.binance.com/api/v3/klines"
-            response = requests.get(url, params=params, timeout=10)
-        
-        response.raise_for_status()
-        data = response.json()
-        
-        result = []
-        for kline in data:
-            ts = datetime.utcfromtimestamp(kline[0] / 1000)
-            price = float(kline[4])  # 收盘价
-            result.append({
-                "ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "value": round(price, 2)
-            })
-        
-        return result
-        
-    except requests.RequestException as e:
-        print(f"Binance API 失败: {e}")
-        return []
-
-
-def fetch_btc_prices_okx(hours: int = 168) -> List[Dict]:
-    """
-    从 OKX 获取 BTC 价格数据
-    """
-    end_time = int(datetime.utcnow().timestamp() * 1000)
-    start_time = end_time - (hours * 60 * 60 * 1000)
-    
-    url = "https://www.okx.com/api/v5/market/history-candles"
-    params = {
-        "instId": "BTC-USDT",
-        "bar": "1h",
-        "startTime": start_time,
-        "endTime": end_time,
-        "limit": 100
-    }
-    
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        if data.get("code") != "0":
-            print(f"OKX API 错误: {data.get('msg')}")
-            return []
-        
-        result = []
-        for item in data.get("data", []):
-            ts = datetime.utcfromtimestamp(int(item[0]) / 1000)
-            price = float(item[4])  # 收盘价
-            result.append({
-                "ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "value": round(price, 2)
-            })
-        
-        return result
-        
-    except requests.RequestException as e:
-        print(f"OKX API 失败: {e}")
-        return []
-
-
-def fetch_btc_prices_coinstats(hours: int = 168) -> List[Dict]:
-    """
-    从 CoinStats 获取 BTC 价格数据
-    """
-    # 使用较新的时间参数
-    end_time = int(datetime.utcnow().timestamp() * 1000)
-    start_time = end_time - (hours * 60 * 60 * 1000)
-    
-    url = "https://api.coinstats.app/public/v1/coins/bitcoin"
-    params = {
-        "timePeriod": "1h",
-        "startDate": start_time,
-        "endDate": end_time
-    }
-    
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        result = []
-        for item in data.get("history", []):
-            ts = datetime.utcfromtimestamp(int(item["date"]))
-            result.append({
-                "ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "value": round(float(item["price"]), 2)
-            })
-        
-        return result
-        
-    except requests.RequestException as e:
-        print(f"CoinStats API 失败: {e}")
-        return []
-
-
 def fetch_btc_prices(hours: int = 168) -> List[Dict]:
     """
-    获取 BTC 价格数据（尝试多个 API）
+    获取 BTC 价格数据（优先 OKX）
     """
-    # 尝试多个 API
+    # 优先尝试 OKX
     apis = [
         ("OKX", fetch_btc_prices_okx),
         ("CoinGecko", fetch_btc_prices_coingecko),
-        ("Binance", fetch_btc_prices_binance),
     ]
     
     for name, fetch_func in apis:
@@ -203,11 +138,11 @@ def generate_mock_btc_prices(hours: int = 168) -> List[Dict]:
     
     for i in range(hours, 0, -1):
         ts = now - timedelta(hours=i)
-        # 模拟价格波动
         price = base_price + random.uniform(-2000, 2000) + random.gauss(0, 500)
         result.append({
             "ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "value": round(price, 2)
+            "value": round(price, 2),
+            "source": "mock"
         })
     
     return result
@@ -215,23 +150,18 @@ def generate_mock_btc_prices(hours: int = 168) -> List[Dict]:
 
 def get_cached_btc_prices(hours: int = 168) -> List[Dict]:
     """获取 BTC 价格（带缓存）"""
-    # 检查缓存是否存在且有效
     if os.path.exists(BTC_CACHE_FILE):
         try:
             with open(BTC_CACHE_FILE, 'r') as f:
                 cache = json.load(f)
-            # 缓存时间不超过5分钟
             if time.time() - cache.get("timestamp", 0) < BTC_CACHE_DURATION:
                 cached_data = cache.get("data", [])
-                # 只返回请求的小时数
                 return cached_data[:hours]
         except Exception:
             pass
     
-    # 获取新数据
     prices = fetch_btc_prices(hours)
     
-    # 写入缓存
     try:
         with open(BTC_CACHE_FILE, 'w') as f:
             json.dump({"timestamp": time.time(), "data": prices}, f)
@@ -245,28 +175,33 @@ def fetch_btc_price_current() -> Optional[Dict]:
     """
     获取当前 BTC 价格
     """
-    url = "https://api.coingecko.com/api/v3/simple/price"
-    params = {
-        "ids": "bitcoin",
-        "vs_currencies": "usd"
-    }
-    
     try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
+        result = subprocess.run(
+            ["okx", "market", "ticker", "BTC-USDT"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
         
-        return {
-            "ts": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "value": round(data["bitcoin"]["usd"], 2)
-        }
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\n')
+            for line in lines:
+                if 'last' in line.lower():
+                    parts = line.split()
+                    for i, p in enumerate(parts):
+                        if p == 'last':
+                            price = float(parts[i+1])
+                            return {
+                                "ts": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                "value": round(price, 2)
+                            }
     except Exception as e:
         print(f"获取当前BTC价格失败: {e}")
-        return None
+    
+    return None
 
 
 if __name__ == "__main__":
-    # 测试
     prices = get_cached_btc_prices(24)
     print(f"获取到 {len(prices)} 条数据")
     if prices:

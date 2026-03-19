@@ -17,8 +17,10 @@ exchange-monitor/
 │   │   ├── models/          # 数据模型
 │   │   ├── routers/          # API 路由
 │   │   └── services/         # 业务服务
+│   │       ├── btc_service.py      # BTC 价格服务（支持 AiCoin/CoinGecko/OKX/Hyperliquid）
+│   │       └── exchange_service.py # 交易所交易量服务
 │   ├── requirements.txt
-│   ├── seed_data.py         # 种子数据
+│   ├── seed_data.py         # 种子数据（支持真实数据填充）
 │   └── README.md
 ├── frontend/         # React + Vite 前端
 │   ├── src/
@@ -39,6 +41,21 @@ exchange-monitor/
 - ✅ **交易所勾选** - 可勾选启用/禁用特定交易所曲线
 - 📰 **事件时间流** - 图表下方展示时间轴对应事件
 - 🔍 **事件分类筛选** - 支持按类型筛选事件
+- 🌐 **多数据源** - 支持 AiCoin、CoinGecko、OKX、Hyperliquid 实时数据
+
+## 数据源
+
+### BTC 价格
+- **优先**: AiCoin（聚合数据源）
+- **备用**: CoinGecko、OKX、Hyperliquid
+- **fallback**: 模拟数据
+
+### 交易所交易量
+- **Hyperliquid**: 直接 API 获取（实时）
+- **其他交易所**: AiCoin 聚合数据（需要付费订阅）
+- **fallback**: 模拟数据
+
+> ⚠️ 当前服务器（腾讯云硅谷）无法访问部分 API（AiCoin DNS 解析失败），BTC 数据会回退到 CoinGecko。
 
 ## 快速启动
 
@@ -74,17 +91,23 @@ npm run dev
 
 前端地址: http://localhost:5173
 
-## 配置说明
+## 数据填充
 
-### 后端配置
+### 方式一：模拟数据（默认）
 
-端口: 8000
-数据库: SQLite (exchange_monitor.db)
+```bash
+cd backend
+python3 seed_data.py
+```
 
-### 前端配置
+### 方式二：真实数据
 
-前端默认连接 `http://localhost:8000`，如需修改请编辑：
-- `frontend/src/services/api.ts`
+```bash
+cd backend
+python3 seed_data.py --live --hours 168
+```
+
+> 注意：真实数据需要网络可达 AiCoin/CoinGecko/OKX/Hyperliquid API。
 
 ## API 端点
 
@@ -92,11 +115,13 @@ npm run dev
 |------|------|
 | GET /api/chart | 获取图表数据 |
 | GET /api/events | 获取事件列表 |
+| GET /health | 健康检查 |
 
 ## 技术栈
 
 - **后端**: FastAPI + SQLite + SQLAlchemy
 - **前端**: React + TypeScript + Vite + ECharts
+- **数据源**: AiCoin, CoinGecko, OKX, Hyperliquid
 
 ## 部署
 

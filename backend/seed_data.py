@@ -1,12 +1,18 @@
 """
 初始化数据库并填充演示数据
+支持真实数据填充（使用 --live 参数）
 """
 import random
+import argparse
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from app.database import SessionLocal, init_db
 from app.models import models
+import sys
+import os
 
+# 添加项目根目录到路径
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # 交易所配置
 EXCHANGES = ["binance", "okx", "bybit", "bitget", "hyperliquid"]
@@ -53,8 +59,37 @@ EVENTS_DATA = [
 ]
 
 
-def generate_btc_prices(db: Session, hours: int = 168):
-    """生成 BTC 价格数据（7天，每小时一条）"""
+def generate_btc_prices(db: Session, hours: int = 168, use_live: bool = False):
+    """生成 BTC 价格数据"""
+    if use_live:
+        # 尝试从真实 API 获取
+        try:
+            from app.services.btc_service import get_cached_btc_prices
+            print("从 AiCoin/CoinGecko/OKX/Hyperliquid 获取真实 BTC 数据...")
+            prices = get_cached_btc_prices(hours)
+            
+            if prices and len(prices) > 0:
+                # 清空旧数据
+                db.query(models.BtcPrice).delete()
+                
+                for p in prices:
+                    # 获取数据来源
+                    source = p.get("source", "okx")
+                    btc = models.BtcPrice(
+                        timestamp=datetime.strptime(p["ts"], "%Y-%m-%dT%H:%M:%SZ"),
+                        price=p["value"],
+                        volume_24h=random.uniform(25000000000, 35000000000),
+                        source=source
+                    )
+                    db.add(btc)
+                
+                db.commit()
+                print(f"✅ 已从 API 获取 {len(prices)} 条 BTC 价格数据")
+                return
+        except Exception as e:
+            print(f"获取真实数据失败: {e}，使用模拟数据")
+    
+    # 模拟数据
     now = datetime.utcnow()
     base_price = 82000
     
@@ -68,17 +103,17 @@ def generate_btc_prices(db: Session, hours: int = 168):
             timestamp=timestamp,
             price=round(price, 2),
             volume_24h=volume,
-            source="binance"
+            source="mock"
         )
         db.add(btc)
     
-    print(f"✅ 已生成 {hours} 条 BTC 价格数据")
+    db.commit()
+    print(f"✅ 已生成 {hours} 条 BTC 价格模拟数据")
 
 
-def generate_volume_data(db: Session, hours: int = 168):
+def generate_volume_data(db: Session, hours: int = 168, use_live: bool = False):
     """生成交易所交易量数据"""
-    now = datetime.utcnow()
-    
+    # 交易量基准配置（USDT，单位：百万）
     volume_config = {
         "binance": {"spot": 25000, "futures": 75000},
         "okx": {"spot": 15000, "futures": 45000},
@@ -87,6 +122,26 @@ def generate_volume_data(db: Session, hours: int = 168):
         "hyperliquid": {"spot": 0, "futures": 20000},
     }
     
+    if use_live:
+        try:
+            from app.services.exchange_service import get_cached_exchange_volumes
+            print("从 AiCoin/Hyperliquid 获取真实交易量数据...")
+            live_volumes = get_cached_exchange_volumes(24)
+            
+            # 更新基准配置
+            for exchange, volumes in live_volumes.items():
+                if exchange in volume_config:
+                    if volumes.get("spot", 0) > 0:
+                        volume_config[exchange]["spot"] = volumes["spot"] / 1_000_000
+                    if volumes.get("futures", 0) > 0:
+                        volume_config[exchange]["futures"] = volumes["futures"] / 1_000_000
+            
+            print(f"✅ 已获取真实交易量数据: {live_volumes}")
+        except Exception as e:
+            print(f"获取真实交易量失败: {e}，使用模拟数据")
+    
+    now = datetime.utcnow()
+    
     for exchange in EXCHANGES:
         for market_type in MARKET_TYPES:
             base_volume = volume_config.get(exchange, {}).get(market_type, 10000)
@@ -94,70 +149,73 @@ def generate_volume_data(db: Session, hours: int = 168):
             for i in range(hours, 0, -1):
                 timestamp = now - timedelta(hours=i)
                 # 添加随机波动
-                volume = base_volume * random.uniform(0.5, 1.5)
+                volume = base_volume * random.uniform(0.5, 1.5) * 1_000_000  # 转换为 USDT
                 
                 vol = models.ExchangeVolume(
                     timestamp=timestamp,
                     exchange=exchange,
                     market_type=market_type,
-                    volume=volume,
-                    tx_count=int(volume / 1000),
-                    source="api"
+                    volume=round(volume, 2),
+                    tx_count=random.randint(10000, 500000),
+                    source="mock" if not use_live else "cmc+hyperliquid"
                 )
                 db.add(vol)
     
-    print(f"✅ 已生成 {hours * len(EXCHANGES) * len(MARKET_TYPES)} 条交易量数据")
+    db.commit()
+    print(f"✅ 已生成 {hours} x {len(EXCHANGES)} x {len(MARKET_TYPES)} 条交易量数据")
 
 
 def generate_events(db: Session):
     """生成事件数据"""
     for event_data in EVENTS_DATA:
-        event_time = datetime.strptime(event_data["event_time"], "%Y-%m-%d %H:%M")
-        
         event = models.StructuredEvent(
-            event_time=event_time,
+            event_time=datetime.strptime(event_data["event_time"], "%Y-%m-%d %H:%M"),
             event_type=event_data["event_type"],
             exchange=event_data["exchange"],
             title=event_data["title"],
             summary=event_data["summary"],
-            content=event_data["summary"],  # MVP 暂时用相同内容
             importance=event_data["importance"],
             is_published=True
         )
         db.add(event)
     
+    db.commit()
     print(f"✅ 已生成 {len(EVENTS_DATA)} 条事件数据")
 
 
-def seed_data():
-    """填充演示数据"""
-    print("🚀 开始初始化数据库...")
-    
-    # 初始化表结构
+def seed_database(use_live: bool = False, hours: int = 168):
+    """填充数据库"""
+    print(f"初始化数据库 (use_live={use_live}, hours={hours})...")
     init_db()
     
     db = SessionLocal()
     try:
-        # 检查是否已有数据
-        existing_btc = db.query(models.BtcPrice).count()
-        if existing_btc > 0:
-            print(f"⚠️ 数据库已有 {existing_btc} 条 BTC 数据，跳过填充")
-            return
+        # 清空现有数据
+        print("清空现有数据...")
+        db.query(models.BtcPrice).delete()
+        db.query(models.ExchangeVolume).delete()
+        db.query(models.StructuredEvent).delete()
+        db.commit()
         
-        # 生成数据
-        generate_btc_prices(db, hours=168)  # 7天
-        generate_volume_data(db, hours=168)
+        # 生成新数据
+        generate_btc_prices(db, hours, use_live)
+        generate_volume_data(db, hours, use_live)
         generate_events(db)
         
-        db.commit()
-        print("🎉 数据填充完成！")
+        print("🎉 数据库填充完成!")
         
     except Exception as e:
-        print(f"❌ 错误: {e}")
+        print(f"❌ 填充数据库失败: {e}")
         db.rollback()
     finally:
         db.close()
 
 
 if __name__ == "__main__":
-    seed_data()
+    parser = argparse.ArgumentParser(description="初始化 Exchange Monitor 数据库")
+    parser.add_argument("--live", action="store_true", help="使用真实 API 数据填充")
+    parser.add_argument("--hours", type=int, default=168, help="生成多少小时的数据（默认168小时=7天）")
+    
+    args = parser.parse_args()
+    
+    seed_database(use_live=args.live, hours=args.hours)
