@@ -20,6 +20,7 @@ import json
 import logging
 
 from app.models import models
+from app.services.exchange_service import fetch_exchange_oi
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +160,7 @@ def aggregate_daily_events(
     Returns:
         {
             "event_count": int,
-            "high_risk_event_count": int,
+            "high_priority_event_count": int,
             "events_by_type": {event_type: count},
             "top_events": [list of event dicts],
         }
@@ -176,7 +177,11 @@ def aggregate_daily_events(
     ).all()
     
     event_count = len(events)
-    high_risk_count = sum(1 for e in events if e.risk_level == "high")
+    # 高优先级事件：risk_level=high 或 impact_score>=70
+    high_priority_count = sum(
+        1 for e in events 
+        if e.risk_level == "high" or (e.impact_score and e.impact_score >= 70)
+    )
     
     # 按类型统计
     events_by_type = {}
@@ -190,7 +195,7 @@ def aggregate_daily_events(
     
     return {
         "event_count": event_count,
-        "high_risk_event_count": high_risk_count,
+        "high_priority_event_count": high_priority_count,
         "events_by_type": events_by_type,
         "top_events": [
             {
@@ -198,12 +203,43 @@ def aggregate_daily_events(
                 "event_type": e.event_type,
                 "title": e.title,
                 "event_time": e.event_time.isoformat() if e.event_time else None,
-                "risk_level": e.risk_level,
-                "impact_score": e.impact_score,
+                "impact_score": e.impact_score or 0,
             }
             for e in top_events
         ],
     }
+
+
+def generate_summary_line(exchange: str, volumes: Dict, events_data: Dict) -> str:
+    """生成一句话总结"""
+    lines = []
+    
+    # 交易量变化
+    total_change = volumes.get("total_change", 0)
+    spot_change = volumes.get("spot_change", 0)
+    futures_change = volumes.get("futures_change", 0)
+    
+    if abs(total_change) > 5:
+        direction = "rose" if total_change > 0 else "fell"
+        lines.append(f"Total volume {direction} {abs(total_change):.1f}%")
+    
+    if abs(spot_change) > 10:
+        direction = "up" if spot_change > 0 else "down"
+        lines.append(f"Spot trading {direction} {abs(spot_change):.1f}%")
+    
+    # 事件影响
+    event_count = events_data.get("event_count", 0)
+    if event_count > 0:
+        event_types = events_data.get("events_by_type", {})
+        top_types = sorted(event_types.items(), key=lambda x: -x[1])[:2]
+        type_names = [EVENT_TYPE_NAMES.get(t, t) for t, _ in top_types]
+        if type_names:
+            lines.append(f"Driven by {', '.join(type_names)} activity")
+    
+    if not lines:
+        return "Market activity remained stable."
+    
+    return ". ".join(lines)
 
 
 # ========== 生成 Takeaways ==========
@@ -385,12 +421,15 @@ def get_exchange_updates(db: Session, target_date: Optional[date] = None) -> Lis
                 "total_volume": 1234567890,
                 "spot_volume": 456789012,
                 "futures_volume": 777777878,
+                "futures_oi": 2500000000,
                 "total_change_pct": 12.5,
                 "spot_change_pct": 8.3,
                 "futures_change_pct": 15.1,
+                "oi_change_pct": 4.2,
                 "event_count": 5,
-                "high_risk_event_count": 1,
+                "high_priority_event_count": 1,
                 "top_events": [...],
+                "summary_line": "Spot volume rose with listing and campaign activity."
             },
             ...
         ]
@@ -412,17 +451,33 @@ def get_exchange_updates(db: Session, target_date: Optional[date] = None) -> Lis
         # 获取事件
         events_data = aggregate_daily_events(db, exchange, target_date)
         
+        # 获取 OI 数据
+        oi_data = fetch_exchange_oi().get(exchange, {})
+        futures_oi = oi_data.get("oi")
+        oi_change_pct = oi_data.get("oi_change_pct")
+        
+        # 生成总结
+        vol_with_changes = {
+            "total_change": total_change,
+            "spot_change": spot_change,
+            "futures_change": futures_change,
+        }
+        summary_line = generate_summary_line(exchange, vol_with_changes, events_data)
+        
         update = {
             "exchange": exchange,
             "total_volume": volumes["total"],
             "spot_volume": volumes["spot"],
             "futures_volume": volumes["futures"],
+            "futures_oi": futures_oi,
             "total_change_pct": total_change,
             "spot_change_pct": spot_change,
             "futures_change_pct": futures_change,
+            "oi_change_pct": oi_change_pct,
             "event_count": events_data["event_count"],
-            "high_risk_event_count": events_data["high_risk_event_count"],
+            "high_priority_event_count": events_data["high_priority_event_count"],
             "top_events": events_data["top_events"],
+            "summary_line": summary_line,
         }
         
         updates.append(update)

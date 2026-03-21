@@ -888,3 +888,207 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ========== Exchange Cards Grid ========== */
+.exchange-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+/* ========== Exchange Card ========== */
+.exchange-card {
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-top: 3px solid;
+}
+
+.exchange-card.loading {
+  min-height: 300px;
+}
+
+.exchange-card .skeleton {
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--border-color) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton-header {
+  height: 24px;
+  width: 60%;
+}
+
+.skeleton-text {
+  height: 16px;
+  width: 100%;
+}
+
+.skeleton-text.short {
+  width: 40%;
+}
+
+/* ========== Card Header ========== */
+.exchange-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.exchange-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.exchange-name {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.status-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.status-badge.active {
+  background: rgba(63, 185, 80, 0.2);
+  color: var(--accent-green);
+}
+
+.status-badge.inactive {
+  background: rgba(139, 148, 158, 0.2);
+  color: var(--text-secondary);
+}
+
+.event-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ========== Volume Stats ========== */
+.volume-stats {
+  margin-bottom: 16px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.stat-label {
+  width: 80px;
+  color: var(--text-secondary);
+}
+
+.stat-value {
+  flex: 1;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stat-change {
+  width: 60px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.stat-change.up {
+  color: var(--accent-green);
+}
+
+.stat-change.down {
+  color: var(--accent-red);
+}
+
+.stat-change.neutral {
+  color: var(--text-secondary);
+}
+
+/* ========== Top Events ========== */
+.top-events-section {
+  margin-bottom: 12px;
+}
+
+.section-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.event-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.event-type-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: white;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.event-title {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.no-events {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 12px 0;
+}
+
+/* ========== Summary ========== */
+.summary-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.summary-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* ========== Risk Warning ========== */
+.risk-warning {
+  margin-top: 12px;
+  padding: 8px;
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid var(--accent-red);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--accent-red);
+  text-align: center;
+}

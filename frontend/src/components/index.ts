@@ -5,5 +5,6 @@ export { EventsList } from './EventsList';
 export { EventModal } from './EventModal';
 export { InsightSummary } from './InsightSummary';
 export { DailyExchangeUpdates } from './DailyExchangeUpdates';
+export { ExchangeUpdateCard } from './ExchangeUpdateCard';
 export { EventTimeline } from './EventTimeline';
 export { NewsWatch } from './NewsWatch';

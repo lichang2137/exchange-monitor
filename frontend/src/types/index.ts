@@ -88,24 +88,30 @@ export interface DashboardSummary {
 
 export interface TopEvent {
   id: string;
+  event_time: string;
   event_type: string;
   title: string;
-  event_time: string | null;
-  risk_level: string | null;
-  impact_score: number;
+  impact_score?: number;
 }
 
 export interface ExchangeUpdate {
   exchange: string;
-  total_volume: number;
-  spot_volume: number;
-  futures_volume: number;
-  total_change_pct: number;
-  spot_change_pct: number;
-  futures_change_pct: number;
+  total_volume: number | null;
+  spot_volume: number | null;
+  futures_volume: number | null;
+  futures_oi: number | null;
+
+  total_change_pct: number | null;
+  spot_change_pct: number | null;
+  futures_change_pct: number | null;
+  oi_change_pct: number | null;
+
   event_count: number;
-  high_risk_event_count: number;
+  high_priority_event_count: number;
+
   top_events: TopEvent[];
+
+  summary_line: string;
 }
 
 export interface NewsItem {
