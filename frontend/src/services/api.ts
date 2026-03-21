@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { ChartData, EventsResponse, Exchange, Filters, MarketType } from '../types';
+import type { ChartData, EventsResponse, Exchange, Filters, MarketType, DashboardSummary, ExchangeUpdate, NewsItem } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -58,6 +58,31 @@ export const exchangesApi = {
 export const filtersApi = {
   getFilters: async (): Promise<Filters> => {
     const { data } = await api.get<Filters>('/filters');
+    return data;
+  },
+};
+
+export const dashboardApi = {
+  getSummary: async (date?: string): Promise<DashboardSummary> => {
+    const params = new URLSearchParams();
+    if (date) params.append('date', date);
+    const { data } = await api.get<DashboardSummary>(`/dashboard/summary?${params}`);
+    return data;
+  },
+  getExchangeUpdates: async (date?: string): Promise<ExchangeUpdate[]> => {
+    const params = new URLSearchParams();
+    if (date) params.append('date', date);
+    const { data } = await api.get<ExchangeUpdate[]>(`/dashboard/exchange-updates?${params}`);
+    return data;
+  },
+};
+
+export const newsApi = {
+  getNews: async (newsType?: string, range: string = '7d'): Promise<NewsItem[]> => {
+    const params = new URLSearchParams();
+    if (newsType) params.append('news_type', newsType);
+    params.append('range', range);
+    const { data } = await api.get<NewsItem[]>(`/news?${params}`);
     return data;
   },
 };

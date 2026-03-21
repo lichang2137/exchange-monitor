@@ -62,6 +62,66 @@ export interface Filters {
 // 图表数据类型
 export type MarketType = 'spot' | 'futures' | 'total';
 
+// ========== Dashboard Types ==========
+
+export interface TopMover {
+  exchange: string | null;
+  change_pct: number;
+}
+
+export interface RiskSummary {
+  high_risk_events: number;
+  wallet_issues: number;
+  compliance_events: number;
+}
+
+export interface DashboardSummary {
+  date: string;
+  top_takeaways: string[];
+  top_movers: {
+    total: TopMover;
+    spot: TopMover;
+    futures: TopMover;
+  };
+  risk_summary: RiskSummary;
+}
+
+export interface TopEvent {
+  id: string;
+  event_type: string;
+  title: string;
+  event_time: string | null;
+  risk_level: string | null;
+  impact_score: number;
+}
+
+export interface ExchangeUpdate {
+  exchange: string;
+  total_volume: number;
+  spot_volume: number;
+  futures_volume: number;
+  total_change_pct: number;
+  spot_change_pct: number;
+  futures_change_pct: number;
+  event_count: number;
+  high_risk_event_count: number;
+  top_events: TopEvent[];
+}
+
+export interface NewsItem {
+  id: string;
+  published_at: string | null;
+  news_type: string;
+  title: string;
+  summary: string | null;
+  source: string | null;
+  source_url: string | null;
+  tags: string[];
+  related_exchanges: string[];
+  related_symbols: string[];
+  importance_score: number;
+}
+
 // 事件类型映射
 export const EVENT_TYPE_LABELS: Record<string, string> = {
   announcement: '公告',

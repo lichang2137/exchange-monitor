@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
-import { Header, ControlPanel, PriceChart, EventsList, EventModal } from './components';
+import { Header, ControlPanel, PriceChart, EventsList, EventModal, InsightSummary, DailyExchangeUpdates, EventTimeline, NewsWatch } from './components';
 import { useExchangeData, useChartData, useEvents } from './hooks/useData';
+import { useDashboardSummary, useExchangeUpdates, useNews } from './hooks/useDashboard';
 import type { MarketType, ChartEvent, EventItem } from './types';
 import './App.css';
 
@@ -33,6 +34,11 @@ function App() {
     endTime
   );
 
+  // Dashboard 数据
+  const { summary, refetch: summaryRefetch } = useDashboardSummary();
+  const { updates, refetch: updatesRefetch } = useExchangeUpdates();
+  const { news, loading: newsLoading } = useNews();
+
   // 处理器
   const handleExchangeToggle = useCallback((exchange: string) => {
     setSelectedExchanges(prev => {
@@ -46,12 +52,12 @@ function App() {
   const handleRefresh = useCallback(() => {
     chartRefetch();
     eventsRefetch();
-  }, [chartRefetch, eventsRefetch]);
+    summaryRefetch();
+    updatesRefetch();
+  }, [chartRefetch, eventsRefetch, summaryRefetch, updatesRefetch]);
 
   const handleChartEventClick = useCallback((event: ChartEvent) => {
-    // 高亮图表中的事件点
     setHighlightedEventId(event.id);
-    // 查找完整事件信息
     const fullEvent = events.find(e => e.id === event.id);
     if (fullEvent) {
       setSelectedEvent(fullEvent);
@@ -98,6 +104,7 @@ function App() {
         onRefresh={handleRefresh}
       />
       
+      {/* 主图区域 - 保持不变 */}
       <PriceChart
         data={chartData}
         loading={chartLoading}
@@ -110,14 +117,26 @@ function App() {
         onEventClick={handleChartEventClick}
       />
       
-      <EventsList
+      {/* 新增: Insight Summary */}
+      <InsightSummary summary={summary} loading={!summary} />
+      
+      {/* 新增: Daily Exchange Updates */}
+      <DailyExchangeUpdates updates={updates} loading={updates.length === 0 && !summary} />
+      
+      {/* 新增: Event Timeline */}
+      <EventTimeline
         events={events}
         loading={eventsLoading}
         total={total}
         highlightedEventId={highlightedEventId}
         onEventClick={handleEventClick}
+        onRefresh={eventsRefetch}
       />
       
+      {/* 新增: News Watch (占位版) */}
+      <NewsWatch news={news} loading={newsLoading} />
+      
+      {/* 保留: Event Modal */}
       <EventModal
         event={selectedEvent}
         onClose={() => setSelectedEvent(null)}

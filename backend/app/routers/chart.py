@@ -13,6 +13,7 @@ from app.models.schemas import (
     ExchangeInfo, FiltersResponse
 )
 from app.services.btc_service import fetch_btc_prices, generate_mock_btc_prices
+from app.services.exchange_service import get_cached_exchange_volumes, get_all_exchange_volumes_series
 
 router = APIRouter()
 
@@ -134,53 +135,43 @@ def get_chart_data_v2(
     # 解析交易所
     exchange_list = exchanges.split(",") if exchanges else [e["id"] for e in SUPPORTED_EXCHANGES]
     
-    # 查询交易量 (从数据库)
-    if market_type == "total":
-        # 总量 = 现货 + 合约
-        spot_query = db.query(models.ExchangeVolume).filter(
-            models.ExchangeVolume.timestamp >= start_time,
-            models.ExchangeVolume.timestamp <= end_time,
-            models.ExchangeVolume.exchange.in_(exchange_list),
-            models.ExchangeVolume.market_type == "spot"
-        ).order_by(models.ExchangeVolume.timestamp, models.ExchangeVolume.exchange)
+    # 获取交易量 (使用缓存)
+    cached_volumes = get_all_exchange_volumes_series(hours)
+    
+    # 构建返回数据
+    volumes = []
+    for ex in exchange_list:
+        if ex not in cached_volumes:
+            continue
         
-        futures_query = db.query(models.ExchangeVolume).filter(
-            models.ExchangeVolume.timestamp >= start_time,
-            models.ExchangeVolume.timestamp <= end_time,
-            models.ExchangeVolume.exchange.in_(exchange_list),
-            models.ExchangeVolume.market_type == "futures"
-        ).order_by(models.ExchangeVolume.timestamp, models.ExchangeVolume.exchange)
+        ex_data = cached_volumes[ex]
         
-        spot_data = { (v.timestamp, v.exchange): v.volume for v in spot_query.all()}
-        futures_data = { (v.timestamp, v.exchange): v.volume for v in futures_query.all()}
-        
-        volumes = []
-        for (ts, ex), spot_vol in spot_data.items():
-            futures_vol = futures_data.get((ts, ex), 0)
-            volumes.append(VolumeResponse(
-                ts=ts.isoformat() + "Z",
-                exchange=ex,
-                market_type="total",
-                value=spot_vol + futures_vol
-            ))
-        volumes.sort(key=lambda x: x.ts)
-    else:
-        vol_query = db.query(models.ExchangeVolume).filter(
-            models.ExchangeVolume.timestamp >= start_time,
-            models.ExchangeVolume.timestamp <= end_time,
-            models.ExchangeVolume.exchange.in_(exchange_list),
-            models.ExchangeVolume.market_type == market_type
-        ).order_by(models.ExchangeVolume.timestamp)
-        
-        volumes = [
-            VolumeResponse(
-                ts=v.timestamp.isoformat() + "Z",
-                exchange=v.exchange,
-                market_type=v.market_type,
-                value=v.volume
-            )
-            for v in vol_query.all()
-        ]
+        if market_type == "total":
+            # 总量 = 现货 + 合约
+            spot_data = ex_data.get("spot", [])
+            futures_data = ex_data.get("futures", [])
+            
+            # 合并数据
+            for i in range(min(len(spot_data), len(futures_data))):
+                volumes.append(VolumeResponse(
+                    ts=spot_data[i]["ts"],
+                    exchange=ex,
+                    market_type="total",
+                    value=spot_data[i]["value"] + futures_data[i]["value"]
+                ))
+        else:
+            # 现货或合约
+            market_data = ex_data.get(market_type, [])
+            for item in market_data:
+                volumes.append(VolumeResponse(
+                    ts=item["ts"],
+                    exchange=ex,
+                    market_type=market_type,
+                    value=item["value"]
+                ))
+    
+    # 按时间排序
+    volumes.sort(key=lambda x: x.ts)
     
     # 查询事件
     events_query = db.query(models.StructuredEvent).filter(

@@ -7,6 +7,7 @@ interface UseExchangeDataReturn {
   filters: Filters | null;
   loading: boolean;
   error: string | null;
+  refetch: () => void;
 }
 
 export function useExchangeData(): UseExchangeDataReturn {
@@ -14,6 +15,9 @@ export function useExchangeData(): UseExchangeDataReturn {
   const [filters, setFilters] = useState<Filters | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refetchIndex, setRefetchIndex] = useState(0);
+
+  const refetch = () => setRefetchIndex(prev => prev + 1);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -35,9 +39,9 @@ export function useExchangeData(): UseExchangeDataReturn {
     };
 
     fetchData();
-  }, []);
+  }, [refetchIndex]);
 
-  return { exchanges, filters, loading, error };
+  return { exchanges, filters, loading, error, refetch };
 }
 
 interface UseChartDataReturn {
@@ -62,6 +66,8 @@ export function useChartData(
 
   useEffect(() => {
     const fetchData = async () => {
+      if (selectedExchanges.length === 0) return;
+      
       try {
         setLoading(true);
         const data = await chartApi.getChartData(marketType, selectedExchanges, startTime, endTime);
@@ -75,9 +81,7 @@ export function useChartData(
       }
     };
 
-    if (selectedExchanges.length > 0) {
-      fetchData();
-    }
+    fetchData();
   }, [marketType, selectedExchanges.join(','), startTime, endTime, refetchIndex]);
 
   return { chartData, loading, error, refetch };

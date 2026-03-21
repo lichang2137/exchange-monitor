@@ -3,3 +3,7 @@ export { ControlPanel } from './ControlPanel';
 export { PriceChart } from './PriceChart';
 export { EventsList } from './EventsList';
 export { EventModal } from './EventModal';
+export { InsightSummary } from './InsightSummary';
+export { DailyExchangeUpdates } from './DailyExchangeUpdates';
+export { EventTimeline } from './EventTimeline';
+export { NewsWatch } from './NewsWatch';

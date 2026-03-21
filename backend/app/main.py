@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.database import init_db
-from app.routers import chart
+from app.routers import chart, dashboard, news
 
 
 @asynccontextmanager
@@ -35,6 +35,8 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(chart.router, prefix="/api", tags=["数据接口"])
+app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
+app.include_router(news.router, prefix="/api", tags=["News"])
 
 
 @app.get("/")

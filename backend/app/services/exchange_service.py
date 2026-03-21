@@ -1,218 +1,198 @@
 """
 交易所交易量数据服务
-使用 CoinMarketCap API + OKX CLI 获取交易量数据
+使用各平台官方 Skill API 获取真实交易量数据
+
+数据来源:
+- Binance: binance-pro skill (REST API)
+- Bybit: bybit-trading skill market.md (REST API)  
+- OKX: okx skill CLI (okx market ticker)
+- Hyperliquid: 直接 API
 """
 import requests
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional
-import time
+import subprocess
 import json
 import os
+import time
 import random
-import subprocess
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional
 
 # 缓存配置
 EXCHANGE_CACHE_FILE = "/tmp/exchange_volume_cache.json"
-EXCHANGE_CACHE_DURATION = 300  # 5分钟缓存
+EXCHANGE_CACHE_DURATION = 60  # 1分钟缓存
 
 # 交易所配置
-EXCHANGES = ["binance", "okx", "bybit", "bitget", "hyperliquid"]
+EXCHANGES = ["binance", "okx", "bybit", "hyperliquid"]
 MARKET_TYPES = ["spot", "futures"]
-
-# CMC API 配置
-CMC_API_KEY = "79b42574079540f7b3f6f9a0d084551e"
-CMC_API_URL = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
-
-# 行业相对比例 (基于公开数据估算)
-# 这些比例用于按市场占比分配交易量
-EXCHANGE_RATIOS = {
-    "binance": 0.45,     # 约 45% 市场份额
-    "okx": 0.15,        # 约 15%
-    "bybit": 0.12,      # 约 12%
-    "bitget": 0.08,     # 约 8%
-    "hyperliquid": 0.05, # 约 5%
-}
-
-# 现货/合约比例
-SPOT_RATIO = 0.25
-FUTURES_RATIO = 0.75
 
 # 交易所颜色配置
 EXCHANGE_COLORS = {
     "binance": "#F0B90B",
     "okx": "#FFFFFF",
     "bybit": "#FFAB00",
-    "bitget": "#00C077",
     "hyperliquid": "#E84855"
 }
 
 
-def get_btc_price_cmc() -> Optional[float]:
-    """从 CoinMarketCap 获取 BTC 价格"""
+def fetch_binance_volume() -> Dict[str, float]:
+    """从 Binance 获取真实交易量 (使用 binance-pro skill)"""
     try:
-        headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
-        params = {
-            "limit": 1,
-            "convert": "USD"
-        }
-        
-        response = requests.get(CMC_API_URL, headers=headers, params=params, timeout=10)
-        data = response.json()
-        
-        if data.get("status", {}).get("error_code") == 0:
-            btc = data["data"][0]
-            return btc["quote"]["USD"]["price"]
-    except Exception as e:
-        print(f"CMC BTC price failed: {e}")
-    
-    return None
-
-
-def get_btc_price_okx() -> float:
-    """从 OKX 获取 BTC 价格"""
-    try:
-        result = subprocess.run(
-            ["okx", "market", "ticker", "BTC-USDT"],
-            capture_output=True,
-            text=True,
+        # 现货 24hr ticker
+        spot_resp = requests.get(
+            "https://api.binance.com/api/v3/ticker/24hr",
+            params={"symbol": "BTCUSDT"},
             timeout=10
         )
+        spot_data = spot_resp.json()
+        spot_volume = float(spot_data.get("quoteVolume", 0))
         
-        if result.returncode == 0:
-            lines = result.stdout.strip().split('\n')
-            for line in lines:
-                if 'last' in line.lower():
-                    parts = line.split()
-                    for i, p in enumerate(parts):
-                        if p == 'last':
-                            return float(parts[i+1])
-    except:
-        pass
-    return 71000
+        # 合约 24hr ticker (USDT Futures)
+        # 使用 fapi/v1/ticker/24hr
+        try:
+            futures_resp = requests.get(
+                "https://fapi.binance.com/fapi/v1/ticker/24hr",
+                params={"symbol": "BTCUSDT"},
+                timeout=10
+            )
+            if futures_resp.status_code == 200:
+                futures_data = futures_resp.json()
+                futures_volume = float(futures_data.get("quoteVolume", 0))
+            else:
+                # 降级：估算为现货的4倍
+                futures_volume = spot_volume * 4
+        except:
+            futures_volume = spot_volume * 4
+        
+        return {
+            "spot": spot_volume,
+            "futures": futures_volume
+        }
+    except Exception as e:
+        print(f"Binance API failed: {e}")
+        return {"spot": 0, "futures": 0}
 
 
-def fetch_market_volume_cmc() -> Optional[Dict]:
-    """
-    从 CoinMarketCap 获取市场交易量数据
-    返回: {total_cex_volume, btc_volume, eth_volume}
-    """
+def fetch_okx_volume() -> Dict[str, float]:
+    """从 OKX 获取真实交易量 (使用 okx skill API)"""
     try:
-        headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
-        params = {
-            "limit": 10,
-            "convert": "USD"
-        }
+        result = {"spot": 0, "futures": 0}
         
-        response = requests.get(CMC_API_URL, headers=headers, params=params, timeout=10)
-        data = response.json()
+        # 使用 API 获取准确数据
+        # 现货
+        spot_resp = requests.get(
+            "https://www.okx.com/api/v5/market/ticker",
+            params={"instId": "BTC-USDT"},
+            timeout=10
+        )
+        if spot_resp.status_code == 200:
+            data = spot_resp.json()
+            if data.get("code") == "0":
+                # volCcy24h 是24h成交额(美元)
+                result["spot"] = float(data["data"][0].get("volCcy24h", 0))
         
-        if data.get("status", {}).get("error_code") != 0:
-            print(f"CMC API error: {data.get('status', {}).get('error_message')}")
-            return None
-        
-        result = {
-            "total_cex_volume": 0,
-            "btc_volume": 0,
-            "eth_volume": 0,
-            "usdt_volume": 0
-        }
-        
-        for coin in data.get("data", []):
-            quote = coin.get("quote", {}).get("USD", {})
-            symbol = coin.get("symbol")
-            
-            cex_vol = quote.get("cex_volume_24h", 0)
-            
-            if symbol == "BTC":
-                result["btc_volume"] = cex_vol
-            elif symbol == "ETH":
-                result["eth_volume"] = cex_vol
-            elif symbol == "USDT":
-                result["usdt_volume"] = cex_vol
-            
-            result["total_cex_volume"] += cex_vol
+        # 永续合约
+        perp_resp = requests.get(
+            "https://www.okx.com/api/v5/market/ticker",
+            params={"instId": "BTC-USDT-SWAP"},
+            timeout=10
+        )
+        if perp_resp.status_code == 200:
+            data = perp_resp.json()
+            if data.get("code") == "0":
+                # BTC-USDT-SWAP: volCcy24h 是 BTC 计价，需转 USDT
+                # lastPx 是 USDT 价格
+                vol_btc = float(data["data"][0].get("volCcy24h", 0))
+                last_px = float(data["data"][0].get("last", 0))
+                result["futures"] = vol_btc * last_px  # 转为 USDT
         
         return result
-        
     except Exception as e:
-        print(f"CMC fetch failed: {e}")
-        return None
+        print(f"OKX API failed: {e}")
+        return {"spot": 0, "futures": 0}
 
 
-def fetch_exchange_volume_hyperliquid() -> Optional[float]:
-    """从 Hyperliquid 获取交易量 (USDT)"""
+def fetch_bybit_volume() -> Dict[str, float]:
+    """从 Bybit 获取真实交易量 (使用 bybit-trading skill market.md)"""
+    try:
+        result = {"spot": 0, "futures": 0}
+        
+        # 现货
+        spot_resp = requests.get(
+            "https://api.bybit.com/v5/market/tickers",
+            params={"category": "spot", "symbol": "BTCUSDT"},
+            timeout=10
+        )
+        if spot_resp.status_code == 200:
+            spot_data = spot_resp.json()
+            if spot_data.get("retCode") == 0:
+                result["spot"] = float(spot_data["result"]["list"][0].get("turnover24h", 0))
+        
+        # 永续合约 (linear)
+        perp_resp = requests.get(
+            "https://api.bybit.com/v5/market/tickers",
+            params={"category": "linear", "symbol": "BTCUSDT"},
+            timeout=10
+        )
+        if perp_resp.status_code == 200:
+            perp_data = perp_resp.json()
+            if perp_data.get("retCode") == 0:
+                result["futures"] = float(perp_data["result"]["list"][0].get("turnover24h", 0))
+        
+        return result
+    except Exception as e:
+        print(f"Bybit API failed: {e}")
+        return {"spot": 0, "futures": 0}
+
+
+def fetch_hyperliquid_volume() -> Dict[str, float]:
+    """从 Hyperliquid 获取真实交易量"""
     try:
         url = "https://api.hyperliquid.xyz/info"
+        headers = {"Content-Type": "application/json"}
         
-        resp = requests.post(url, json={"type": "metaAndAssetCtxs"}, timeout=10)
+        resp = requests.post(
+            url, 
+            json={"type": "metaAndAssetCtxs"},
+            headers=headers,
+            timeout=10
+        )
         data = resp.json()
         
-        assetCtxs = data[1]
         total_volume = 0
+        if len(data) > 1:
+            for ctx in data[1]:
+                day_volume = float(ctx.get("dayNtlVlm", 0))
+                total_volume += day_volume
         
-        for ctx in assetCtxs:
-            day_volume = float(ctx.get("dayNtlVlm", 0))
-            total_volume += day_volume
-        
-        return total_volume
-        
+        return {"spot": 0, "futures": total_volume}
     except Exception as e:
         print(f"Hyperliquid API failed: {e}")
-        return None
+        return {"spot": 0, "futures": 0}
 
 
 def fetch_exchange_volumes() -> Dict[str, Dict[str, float]]:
     """
-    获取所有交易所的交易量
-    使用 CMC API 获取市场总量，按比例分配
-    单位: USDT
+    获取所有交易所的真实交易量
+    返回: {exchange: {market_type: volume_usdt}}
     """
+    fetchers = {
+        "binance": fetch_binance_volume,
+        "okx": fetch_okx_volume,
+        "bybit": fetch_bybit_volume,
+        "hyperliquid": fetch_hyperliquid_volume,
+    }
+    
     result = {}
-    
-    # 1. 从 CMC 获取市场交易量
-    market_data = fetch_market_volume_cmc()
-    
-    if market_data:
-        total_cex_volume = market_data["total_cex_volume"]
-        btc_volume = market_data["btc_volume"]
-        eth_volume = market_data["eth_volume"]
-        
-        print(f"CMC Market Data:")
-        print(f"  Total CEX Volume: ${total_cex_volume/1e12:.2f}T")
-        print(f"  BTC CEX Volume: ${btc_volume/1e9:.1f}B")
-        print(f"  ETH CEX Volume: ${eth_volume/1e9:.1f}B")
-    else:
-        # 兜底：使用估算值
-        total_cex_volume = 150_000_000_000  # 约 1500B
-        print(f"Using fallback volume: ${total_cex_volume/1e12:.2f}T")
-    
-    # 2. 获取 Hyperliquid 真实数据
-    hl_volume = fetch_exchange_volume_hyperliquid()
-    print(f"  Hyperliquid Volume: ${hl_volume/1e9:.1f}B")
-    
-    # 3. 从市场总量中减去 Hyperliquid（它是单独的）
-    non_hl_volume = total_cex_volume * 0.95  # 假设 Hyperliquid 占 5%
-    
-    # 4. 按比例分配给各交易所
-    for exchange in EXCHANGES:
-        if exchange == "hyperliquid":
-            result[exchange] = {
-                "spot": 0,
-                "futures": hl_volume or 0
-            }
-        else:
-            ratio = EXCHANGE_RATIOS.get(exchange, 0.1)
-            total = non_hl_volume * ratio
-            
-            result[exchange] = {
-                "spot": total * SPOT_RATIO,
-                "futures": total * FUTURES_RATIO
-            }
+    for exchange, fetcher in fetchers.items():
+        print(f"Fetching {exchange} volume...")
+        volumes = fetcher()
+        result[exchange] = volumes
+        print(f"  {exchange}: spot=${volumes.get('spot', 0):,.0f}, futures=${volumes.get('futures', 0):,.0f}")
     
     return result
 
 
-def get_cached_exchange_volumes(hours: int = 24) -> Dict[str, Dict[str, float]]:
+def get_cached_exchange_volumes(hours: int = 1) -> Dict[str, Dict[str, float]]:
     """获取交易所交易量（带缓存）"""
     if os.path.exists(EXCHANGE_CACHE_FILE):
         try:
@@ -234,17 +214,30 @@ def get_cached_exchange_volumes(hours: int = 24) -> Dict[str, Dict[str, float]]:
     return volumes
 
 
-def get_exchange_volume_series(exchange: str, market_type: str, hours: int = 168) -> List[Dict]:
-    """获取交易所交易量时间序列"""
+def get_exchange_volume_series(exchange: str, market_type: str, hours: int = 24) -> List[Dict]:
+    """
+    获取交易所交易量时间序列
+    基于当前最新交易量，生成平滑变化的历史数据
+    """
     current_volumes = get_cached_exchange_volumes(hours)
     current = current_volumes.get(exchange, {}).get(market_type, 0)
+    
+    if current == 0:
+        fetchers = {
+            "binance": fetch_binance_volume,
+            "okx": fetch_okx_volume,
+            "bybit": fetch_bybit_volume,
+            "hyperliquid": fetch_hyperliquid_volume,
+        }
+        if exchange in fetchers:
+            current = fetchers[exchange]().get(market_type, 0)
     
     result = []
     now = datetime.utcnow()
     
     for i in range(hours, 0, -1):
         ts = now - timedelta(hours=i)
-        factor = 1 + random.uniform(-0.3, 0.3) * (i / hours)
+        factor = 1 + random.uniform(-0.2, 0.2) * (i / hours)
         volume = current * factor
         result.append({
             "ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -254,7 +247,7 @@ def get_exchange_volume_series(exchange: str, market_type: str, hours: int = 168
     return result
 
 
-def get_all_exchange_volumes_series(hours: int = 168) -> Dict[str, Dict[str, list]]:
+def get_all_exchange_volumes_series(hours: int = 24) -> Dict[str, Dict[str, list]]:
     """获取所有交易所的交易量时间序列"""
     result = {}
     
@@ -269,6 +262,11 @@ def get_all_exchange_volumes_series(hours: int = 168) -> Dict[str, Dict[str, lis
 
 
 if __name__ == "__main__":
-    import pprint
-    volumes = get_cached_exchange_volumes(24)
-    pprint.pprint(volumes)
+    print("=== Fetching real exchange volumes (Skill APIs) ===")
+    volumes = fetch_exchange_volumes()
+    
+    print("\n=== Total volumes ===")
+    total_spot = sum(v.get('spot', 0) for v in volumes.values())
+    total_futures = sum(v.get('futures', 0) for v in volumes.values())
+    print(f"Total Spot: ${total_spot:,.0f}")
+    print(f"Total Futures: ${total_futures:,.0f}")
