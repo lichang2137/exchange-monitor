@@ -205,3 +205,22 @@ class InsightSummary(Base):
     __table_args__ = (
         Index('idx_summary_date_type', 'summary_date', 'summary_type'),
     )
+
+
+class TimeSeriesMetric(Base):
+    """统一时间序列指标"""
+    __tablename__ = "time_series_metrics"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, nullable=False, index=True)
+    metric_type = Column(String(20), nullable=False)  # price / volume / oi
+    exchange = Column(String(20), nullable=True)  # binance / okx / etc
+    market_type = Column(String(10), nullable=True)  # spot / futures / total
+    symbol = Column(String(20), default="BTC")
+    value = Column(Float, nullable=False)
+    source = Column(String(50), default="api")
+    created_at = Column(DateTime, server_default=func.now())
+    
+    __table_args__ = (
+        Index('idx_metric_composite', 'metric_type', 'exchange', 'market_type', 'timestamp'),
+    )

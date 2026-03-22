@@ -1,4 +1,4 @@
-// 类型定义 - API v2
+// 类型定义 - API v3
 
 export interface BtcPrice {
   ts: string;
@@ -14,16 +14,30 @@ export interface ExchangeVolume {
 
 export interface ChartEvent {
   id: string;
+  event_date?: string;  // YYYY-MM-DD，来自后端 event_date 字段
   ts: string;
   exchange: string;
   event_type: string;
   title: string;
+  impact_score?: number;
 }
 
+// 新版图表数据（来自 /api/chart-data v3）
 export interface ChartData {
-  btc: BtcPrice[];
-  volumes: ExchangeVolume[];
+  dates: string[];
+  price: Record<string, number[]>;  // { BTC: [price...] }
+  spot_volumes: Record<string, (number | null)[]>;
+  futures_volumes: Record<string, (number | null)[]>;
+  oi: OIData[];
   events: ChartEvent[];
+  // 数据来源标识: official | converted | estimated
+  volume_methods?: Record<string, 'official' | 'converted' | 'estimated'>;
+}
+
+export interface OIData {
+  exchange: string;
+  oi_usd: number;
+  funding_rate: number | null;
 }
 
 export interface EventItem {
@@ -60,7 +74,7 @@ export interface Filters {
 }
 
 // 图表数据类型
-export type MarketType = 'spot' | 'futures' | 'total';
+export type MarketType = 'spot' | 'futures';
 
 // ========== Dashboard Types ==========
 

@@ -1092,3 +1092,36 @@ body {
   color: var(--accent-red);
   text-align: center;
 }
+
+/* ========== Event Type Filter Tabs ========== */
+.event-type-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.event-tab {
+  padding: 4px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.event-tab:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.event-tab.active {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: white;
+}

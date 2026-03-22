@@ -52,10 +52,8 @@ interface UseChartDataReturn {
 }
 
 export function useChartData(
-  marketType: MarketType,
   selectedExchanges: string[],
-  startTime?: string,
-  endTime?: string
+  days: number = 7
 ): UseChartDataReturn {
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,7 +68,7 @@ export function useChartData(
       
       try {
         setLoading(true);
-        const data = await chartApi.getChartData(marketType, selectedExchanges, startTime, endTime);
+        const data = await chartApi.getChartData(selectedExchanges, days);
         setChartData(data);
         setError(null);
       } catch (err) {
@@ -82,7 +80,7 @@ export function useChartData(
     };
 
     fetchData();
-  }, [marketType, selectedExchanges.join(','), startTime, endTime, refetchIndex]);
+  }, [selectedExchanges.join(','), days, refetchIndex]);
 
   return { chartData, loading, error, refetch };
 }

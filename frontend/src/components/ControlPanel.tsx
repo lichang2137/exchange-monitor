@@ -45,7 +45,7 @@ export function ControlPanel({
   const marketTypes = [
     { key: 'spot', label: '现货' },
     { key: 'futures', label: '合约' },
-    { key: 'total', label: '总量' },
+
   ];
 
   return (

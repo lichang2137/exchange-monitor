@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Header, ControlPanel, PriceChart, EventsList, EventModal, InsightSummary, DailyExchangeUpdates, EventTimeline, NewsWatch } from './components';
+import { Header, ControlPanel, PriceChart, EventsList, EventModal, InsightSummary, EventTimeline, NewsWatch } from './components';
 import { useExchangeData, useChartData, useEvents } from './hooks/useData';
 import { useDashboardSummary, useExchangeUpdates, useNews } from './hooks/useDashboard';
 import type { MarketType, ChartEvent, EventItem } from './types';
@@ -7,8 +7,8 @@ import './App.css';
 
 function App() {
   // 状态管理
-  const [marketType, setMarketType] = useState<MarketType>('total');
-  const [selectedExchanges, setSelectedExchanges] = useState<string[]>(['binance', 'okx', 'bybit']);
+  const [marketType, setMarketType] = useState<MarketType>('spot');
+  const [selectedExchanges, setSelectedExchanges] = useState<string[]>(['binance', 'okx', 'bybit', 'bitget', 'hyperliquid']);
   const [eventTypeFilter, setEventTypeFilter] = useState<string>('');
   const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
   const [highlightedEventId, setHighlightedEventId] = useState<string | null>(null);
@@ -16,22 +16,12 @@ function App() {
   // 数据获取
   const { exchanges, filters, loading: dataLoading, error: dataError } = useExchangeData();
   
-  // 时间范围计算（默认7天）
-  const endTime = new Date().toISOString();
-  const startTime = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { chartData, loading: chartLoading, refetch: chartRefetch } = useChartData(selectedExchanges, 7);
   
-  const { chartData, loading: chartLoading, refetch: chartRefetch } = useChartData(
-    marketType, 
-    selectedExchanges,
-    startTime,
-    endTime
-  );
-  
+  // Events - 前端按选中交易所过滤
   const { events, total, loading: eventsLoading, refetch: eventsRefetch } = useEvents(
     eventTypeFilter || undefined,
-    undefined,
-    startTime,
-    endTime
+    undefined  // exchange 由前端过滤
   );
 
   // Dashboard 数据
@@ -58,11 +48,20 @@ function App() {
 
   const handleChartEventClick = useCallback((event: ChartEvent) => {
     setHighlightedEventId(event.id);
-    const fullEvent = events.find(e => e.id === event.id);
+    const fullEvent = (chartData?.events || []).find(e => e.id === event.id);
     if (fullEvent) {
-      setSelectedEvent(fullEvent);
+      setSelectedEvent({
+        id: fullEvent.id,
+        ts: fullEvent.ts,
+        exchange: fullEvent.exchange,
+        event_type: fullEvent.event_type,
+        title: fullEvent.title,
+        summary: null,
+        source: null,
+        url: null,
+      });
     }
-  }, [events]);
+  }, [chartData]);
 
   const handleEventClick = useCallback((event: EventItem) => {
     setSelectedEvent(event);
@@ -104,7 +103,7 @@ function App() {
         onRefresh={handleRefresh}
       />
       
-      {/* 主图区域 - 保持不变 */}
+      {/* 主图 */}
       <PriceChart
         data={chartData}
         loading={chartLoading}
@@ -117,26 +116,25 @@ function App() {
         onEventClick={handleChartEventClick}
       />
       
-      {/* 新增: Insight Summary */}
-      <InsightSummary summary={summary} loading={!summary} />
+      {/* Insight Summary */}
+      <InsightSummary summary={summary} loading={!summary} selectedExchanges={selectedExchanges} />
       
-      {/* 新增: Daily Exchange Updates */}
-      <DailyExchangeUpdates updates={updates} loading={updates.length === 0 && !summary} />
-      
-      {/* 新增: Event Timeline */}
+      {/* Event Timeline - 按选中交易所过滤 */}
       <EventTimeline
-        events={events}
+        events={events.filter(e => selectedExchanges.includes(e.exchange))}
         loading={eventsLoading}
         total={total}
         highlightedEventId={highlightedEventId}
         onEventClick={handleEventClick}
         onRefresh={eventsRefetch}
+        eventTypeFilter={eventTypeFilter}
+        onEventTypeChange={handleEventTypeChange}
       />
       
-      {/* 新增: News Watch (占位版) */}
+      {/* News Watch */}
       <NewsWatch news={news} loading={newsLoading} />
       
-      {/* 保留: Event Modal */}
+      {/* Event Modal */}
       <EventModal
         event={selectedEvent}
         onClose={() => setSelectedEvent(null)}

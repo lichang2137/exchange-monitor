@@ -1,105 +1,91 @@
 import { DashboardSummary } from '../types';
+import type { OIData } from '../types';
 
 interface InsightSummaryProps {
   summary: DashboardSummary | null;
   loading: boolean;
+  selectedExchanges?: string[];
+  oiData?: OIData[];
+  latestPrice?: number;
+  priceChange?: number;
 }
 
-export function InsightSummary({ summary, loading }: InsightSummaryProps) {
+function formatUSD(val: number | undefined | null): string {
+  if (!val) return 'N/A';
+  if (val >= 1e9) return `$${(val/1e9).toFixed(2)}B`;
+  if (val >= 1e6) return `$${(val/1e6).toFixed(2)}M`;
+  return `$${val.toFixed(0)}`;
+}
+
+function generateInsights(
+  oiData: OIData[] | undefined,
+  selectedExchanges: string[]
+): string[] {
+  const insights: string[] = [];
+
+  if (!oiData || oiData.length === 0) {
+    insights.push('暂无显著异动');
+    return insights;
+  }
+
+  // 1. 全网 OI 概览
+  const totalOI = oiData.reduce((sum, ex) => sum + (ex.oi_usd || 0), 0);
+  const topOI = [...oiData].sort((a, b) => (b.oi_usd || 0) - (a.oi_usd || 0));
+  if (topOI[0]) {
+    insights.push(`全网 BTC 合约 OI：${formatUSD(totalOI)}`);
+    insights.push(`最大持仓交易所：${topOI[0].exchange.toUpperCase()}（${formatUSD(topOI[0].oi_usd)}）`);
+  }
+
+  // 2. 资金费率异动（> 0.01% 或 < -0.01%）
+  const fundingAlerts = oiData.filter(ex => ex.funding_rate !== null && Math.abs(ex.funding_rate) > 0.0001);
+  if (fundingAlerts.length > 0) {
+    fundingAlerts.forEach(ex => {
+      const rate = (ex.funding_rate! * 100).toFixed(4);
+      insights.push(`${ex.exchange.toUpperCase()} 资金费率：${rate}%`);
+    });
+  } else {
+    insights.push('各所资金费率整体平稳（±0.01% 内）');
+  }
+
+  // 3. OI 分布异常（最大所 vs 最小所比值）
+  if (topOI.length >= 2) {
+    const ratio = topOI[0].oi_usd / topOI[topOI.length - 1].oi_usd;
+    if (ratio > 5) {
+      insights.push(`${topOI[0].exchange.toUpperCase()} OI 集中度偏高（比其他所高 ${ratio.toFixed(1)} 倍）`);
+    }
+  }
+
+  return insights.length > 0 ? insights : ['暂无显著异动'];
+}
+
+export function InsightSummary({ 
+  summary, 
+  loading, 
+  selectedExchanges = [],
+  oiData,
+  latestPrice,
+  priceChange,
+}: InsightSummaryProps) {
+  const insights = generateInsights(oiData, selectedExchanges);
+
   if (loading) {
     return (
       <div className="insight-summary">
         <div className="section-title">📊 Insight Summary</div>
-        <div className="insight-cards">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="insight-card loading">
-              <div className="skeleton skeleton-title"></div>
-              <div className="skeleton skeleton-text"></div>
-              <div className="skeleton skeleton-text short"></div>
-            </div>
-          ))}
-        </div>
+        <div className="skeleton-text" style={{ height: 80 }} />
       </div>
     );
   }
 
-  if (!summary) return null;
-
-  const { top_takeaways, top_movers, risk_summary } = summary;
-
   return (
     <div className="insight-summary">
       <div className="section-title">📊 Insight Summary</div>
-      <div className="insight-cards">
-        {/* 今日重点结论 */}
-        <div className="insight-card">
-          <div className="insight-card-title">💡 今日重点结论</div>
-          <ul className="insight-list">
-            {top_takeaways.length > 0 ? (
-              top_takeaways.map((item, index) => (
-                <li key={index}>{item}</li>
-              ))
-            ) : (
-              <li>暂无数据</li>
-            )}
-          </ul>
-        </div>
-
-        {/* 业务线异动 */}
-        <div className="insight-card">
-          <div className="insight-card-title">📈 业务线异动</div>
-          <div className="movers-grid">
-            <div className="mover-item">
-              <span className="mover-label">总量变化最大</span>
-              <span className={`mover-value ${top_movers.total.change_pct >= 0 ? 'up' : 'down'}`}>
-                {top_movers.total.exchange?.toUpperCase() || '-'}
-                <span className="change-pct">
-                  {top_movers.total.change_pct >= 0 ? '+' : ''}
-                  {top_movers.total.change_pct.toFixed(1)}%
-                </span>
-              </span>
-            </div>
-            <div className="mover-item">
-              <span className="mover-label">现货变化最大</span>
-              <span className={`mover-value ${top_movers.spot.change_pct >= 0 ? 'up' : 'down'}`}>
-                {top_movers.spot.exchange?.toUpperCase() || '-'}
-                <span className="change-pct">
-                  {top_movers.spot.change_pct >= 0 ? '+' : ''}
-                  {top_movers.spot.change_pct.toFixed(1)}%
-                </span>
-              </span>
-            </div>
-            <div className="mover-item">
-              <span className="mover-label">合约变化最大</span>
-              <span className={`mover-value ${top_movers.futures.change_pct >= 0 ? 'up' : 'down'}`}>
-                {top_movers.futures.exchange?.toUpperCase() || '-'}
-                <span className="change-pct">
-                  {top_movers.futures.change_pct >= 0 ? '+' : ''}
-                  {top_movers.futures.change_pct.toFixed(1)}%
-                </span>
-              </span>
-            </div>
+      <div className="insight-content">
+        {insights.map((insight, idx) => (
+          <div key={idx} className="insight-item">
+            {insight}
           </div>
-        </div>
-
-        {/* 重点风险 */}
-        <div className="insight-card risk">
-          <div className="insight-card-title">⚠️ 重点风险</div>
-          <div className="risk-stats">
-            <div className="risk-stat">
-              <span className="risk-value">{risk_summary.high_risk_events}</span>
-              <span className="risk-label">高风险事件</span>
-            </div>
-            <div className="risk-stat">
-              <span className="risk-value">{risk_summary.wallet_issues}</span>
-              <span className="risk-label">钱包问题</span>
-            </div>
-            <div className="risk-stat">
-              <span className="risk-value">{risk_summary.compliance_events}</span>
-              <span className="risk-label">合规事件</span>
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import json
 
 from app.database import get_db
 from app.models import models
+from app.services import coinalyze_service
 from app.models.schemas import (
     ChartDataResponseV2, ChartEventResponse, BtcResponse, VolumeResponse,
     EventsListResponse, EventListItem,
@@ -91,6 +92,122 @@ def get_cached_btc_prices(hours: int = 168) -> List[Dict]:
 
 # ========== API Endpoints ==========
 
+@router.get("/chart-data")
+def get_chart_data_unified(
+    exchanges: Optional[str] = Query(None, description="交易所逗号分隔，如 binance,okx,bybit"),
+    days: int = Query(7, ge=1, le=30, description="天数"),
+    db: Session = Depends(get_db)
+):
+    """
+    BTC 主交易对跨所情报看板数据接口
+    返回格式:
+    - dates: 所有日期（唯一有序）
+    - price: BTC 日级收盘价
+    - spot_volumes: 各所 BTC 现货 24h 量
+    - futures_volumes: 各所 BTC 合约 24h 量
+    - oi: 各所 BTC 持仓量（Coinalyze）
+    - events: 事件（按选中交易所过滤）
+    """
+    if not exchanges:
+        exchange_list = ["binance", "okx", "bybit", "bitget", "hyperliquid"]
+    else:
+        exchange_list = [e.strip() for e in exchanges.split(",")]
+
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(days=days)
+
+    # ========== 1. BTC 价格（每日收盘价）==========
+    btc_records = db.query(models.BtcPrice).filter(
+        models.BtcPrice.timestamp >= start_time,
+        models.BtcPrice.timestamp <= end_time
+    ).order_by(models.BtcPrice.timestamp).all()
+
+    price_by_day: Dict[str, float] = {}
+    for r in btc_records:
+        day_key = r.timestamp.strftime("%Y-%m-%d")
+        price_by_day[day_key] = r.price
+    dates = sorted(price_by_day.keys())
+    price_series = [price_by_day.get(d, None) for d in dates]
+
+    # ========== 2. 现货量 / 合约量（来自 dashboard_daily_snapshots）==========
+    spot_volumes: Dict[str, List[Optional[float]]] = {ex: [] for ex in exchange_list}
+    futures_volumes: Dict[str, List[Optional[float]]] = {ex: [] for ex in exchange_list}
+
+    for ex in exchange_list:
+        snapshots = db.query(models.DashboardDailySnapshot).filter(
+            models.DashboardDailySnapshot.snapshot_date.in_(dates),
+            models.DashboardDailySnapshot.exchange == ex
+        ).all()
+        snap_map = {s.snapshot_date: s for s in snapshots}
+        for d in dates:
+            s = snap_map.get(d)
+            if s:
+                spot_volumes[ex].append(s.spot_volume)
+                futures_volumes[ex].append(s.futures_volume)
+            else:
+                spot_volumes[ex].append(None)
+                futures_volumes[ex].append(None)
+
+    # ========== 3. OI 数据（Coinalyze）==========
+    oi_data: List[Dict] = []
+    try:
+        from app.services import coinalyze_service
+        oi_raw = coinalyze_service.fetch_current_oi_usd(["BTC"], exchange_list)
+        for item in oi_raw:
+            oi_data.append({
+                "exchange": item["exchange"],
+                "oi_usd": item["oi_usd"],
+                "funding_rate": None,
+            })
+        fr_raw = coinalyze_service.fetch_current_funding_rates(["BTC"], exchange_list)
+        fr_map = {f["exchange"]: f["funding_rate"] for f in fr_raw}
+        for oi in oi_data:
+            oi["funding_rate"] = fr_map.get(oi["exchange"])
+    except Exception as e:
+        print(f"Coinalyze OI error: {e}")
+
+    # ========== 4. Events（来自 exchange_events，按交易所过滤）==========
+    evt_query = db.query(models.ExchangeEvent).filter(
+        models.ExchangeEvent.event_time >= start_time,
+        models.ExchangeEvent.event_time <= end_time
+    )
+    if exchange_list:
+        evt_query = evt_query.filter(models.ExchangeEvent.exchange.in_(exchange_list))
+    evt_query = evt_query.order_by(models.ExchangeEvent.event_time)
+    evt_records = evt_query.all()
+
+    events_data = [
+        {
+            "id": r.id,
+            "event_date": r.event_time.strftime("%Y-%m-%d"),
+            "ts": r.event_time.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
+            "exchange": r.exchange,
+            "event_type": r.event_type,
+            "title": r.title,
+            "impact_score": r.impact_score if r.impact_score is not None else 50
+        }
+        for r in evt_records
+    ]
+
+    return {
+        "dates": dates,
+        "price": {"BTC": price_series},
+        "spot_volumes": spot_volumes,
+        "futures_volumes": futures_volumes,
+        "oi": oi_data,
+        "events": events_data,
+        # 数据来源标识: official=官方API, converted=单位转换, estimated=估算
+        "volume_methods": {
+            "binance_spot": "official",
+            "binance_futures": "official",
+            "okx_spot": "official",
+            "okx_futures": "official",
+            "bybit_spot": "official",
+            "bybit_futures": "official",
+            "hyperliquid_futures": "estimated",  # 全所BTC合计，非单一币对
+        },
+    }
+
 @router.get("/chart", response_model=ChartDataResponseV2)
 def get_chart_data_v2(
     market_type: str = Query("total", description="市场类型: spot/futures/total"),
@@ -133,7 +250,7 @@ def get_chart_data_v2(
     ]
     
     # 解析交易所
-    exchange_list = exchanges.split(",") if exchanges else [e["id"] for e in SUPPORTED_EXCHANGES]
+    exchange_list = exchanges.split(",") if isinstance(exchanges, str) and exchanges else [e["id"] for e in SUPPORTED_EXCHANGES]
     
     # 获取交易量 (使用缓存)
     cached_volumes = get_all_exchange_volumes_series(hours)
@@ -153,11 +270,13 @@ def get_chart_data_v2(
             
             # 合并数据
             for i in range(min(len(spot_data), len(futures_data))):
+                spot_val = spot_data[i].get("value") or 0
+                futures_val = futures_data[i].get("value") or 0
                 volumes.append(VolumeResponse(
                     ts=spot_data[i]["ts"],
                     exchange=ex,
                     market_type="total",
-                    value=spot_data[i]["value"] + futures_data[i]["value"]
+                    value=spot_val + futures_val
                 ))
         else:
             # 现货或合约
@@ -205,31 +324,71 @@ def get_events_v2(
     db: Session = Depends(get_db)
 ):
     """
-    获取事件列表 v2
+    获取事件列表 - 优先 exchange_events 表，支持 event_type 和 exchange 筛选
     """
     # 默认时间范围：最近30天
     if not end_time:
         end_time = datetime.utcnow()
     if not start_time:
         start_time = end_time - timedelta(days=30)
-    
+
+    # 优先从 exchange_events 读取
+    exchange_event_count = db.query(models.ExchangeEvent).filter(
+        models.ExchangeEvent.event_time >= start_time,
+        models.ExchangeEvent.event_time <= end_time
+    ).count()
+
+    if exchange_event_count > 0:
+        query = db.query(models.ExchangeEvent).filter(
+            models.ExchangeEvent.event_time >= start_time,
+            models.ExchangeEvent.event_time <= end_time
+        )
+        if event_type:
+            query = query.filter(models.ExchangeEvent.event_type == event_type)
+        if exchange:
+            query = query.filter(models.ExchangeEvent.exchange == exchange)
+
+        total = query.count()
+        records = query.order_by(desc(models.ExchangeEvent.event_time))\
+            .offset((page - 1) * page_size)\
+            .limit(page_size)\
+            .all()
+
+        return EventsListResponse(
+            events=[
+                EventListItem(
+                    id=r.id,
+                    ts=r.event_time.isoformat() + "Z",
+                    exchange=r.exchange,
+                    event_type=r.event_type,
+                    title=r.title,
+                    summary=r.summary,
+                    source=r.source,
+                    url=r.source_url
+                )
+                for r in records
+            ],
+            total=total
+        )
+
+    # Fallback 到 structured_events
     query = db.query(models.StructuredEvent).filter(
         models.StructuredEvent.is_published == True,
         models.StructuredEvent.event_time >= start_time,
         models.StructuredEvent.event_time <= end_time
     )
-    
+
     if event_type:
         query = query.filter(models.StructuredEvent.event_type == event_type)
     if exchange:
         query = query.filter(models.StructuredEvent.exchange == exchange)
-    
+
     total = query.count()
     events = query.order_by(desc(models.StructuredEvent.event_time))\
         .offset((page - 1) * page_size)\
         .limit(page_size)\
         .all()
-    
+
     return EventsListResponse(
         events=[
             EventListItem(
@@ -271,3 +430,81 @@ def refresh_btc_cache():
         os.remove(BTC_CACHE_FILE)
     prices = get_cached_btc_prices(168)
     return {"status": "ok", "count": len(prices)}
+
+
+# ========== Coinalyze 数据端点 ==========
+
+@router.get("/coinalyze/oi-summary")
+def get_oi_summary(
+    symbol: str = Query("BTC", description="币种，如 BTC/ETH"),
+):
+    """
+    获取指定币种在各所的持仓量(OI) + 资金费率汇总
+    数据来源: Coinalyze
+    """
+    exchanges = ["binance", "okx", "bybit", "hyperliquid"]
+    result = coinalyze_service.get_btc_oi_summary()
+    return result
+
+
+@router.get("/coinalyze/oi-history")
+def get_oi_history(
+    symbol: str = Query("BTC", description="币种"),
+    exchange: str = Query("binance", description="交易所"),
+    days: int = Query(7, ge=1, le=30, description="天数"),
+):
+    """
+    获取指定币种/交易所的 OI 历史 (日级 OHLC)
+    """
+    history = coinalyze_service.fetch_oi_history(
+        symbol=symbol.upper(),
+        exchange=exchange.lower(),
+        days=days
+    )
+    return {
+        "symbol": symbol.upper(),
+        "exchange": exchange.lower(),
+        "history": history,
+    }
+
+
+@router.get("/coinalyze/funding-history")
+def get_funding_history(
+    symbol: str = Query("BTC", description="币种"),
+    exchange: str = Query("binance", description="交易所"),
+    days: int = Query(7, ge=1, le=30, description="天数"),
+):
+    """
+    获取指定币种/交易所的资金费率历史 (日级)
+    """
+    history = coinalyze_service.fetch_funding_history(
+        symbol=symbol.upper(),
+        exchange=exchange.lower(),
+        days=days
+    )
+    return {
+        "symbol": symbol.upper(),
+        "exchange": exchange.lower(),
+        "history": history,
+    }
+
+
+@router.get("/coinalyze/ls-ratio")
+def get_ls_ratio(
+    symbol: str = Query("BTC", description="币种"),
+    exchange: str = Query("binance", description="交易所"),
+    days: int = Query(7, ge=1, le=30, description="天数"),
+):
+    """
+    获取指定币种/交易所的多空比历史
+    """
+    history = coinalyze_service.fetch_long_short_ratio(
+        symbol=symbol.upper(),
+        exchange=exchange.lower(),
+        days=days
+    )
+    return {
+        "symbol": symbol.upper(),
+        "exchange": exchange.lower(),
+        "history": history,
+    }

@@ -65,32 +65,43 @@ def fetch_binance_spot() -> Dict:
 def fetch_binance_futures() -> Dict:
     """
     Binance USDT-M 合约数据
-    Skill: binance-skills/derivatives-trading-usds-futures
-    API: /fapi/v1/ticker/24hr (fapi 被墙，使用 CoinGecko 估算)
-    Binance 合约交易量约占全网 30-40%
+    API: /fapi/v1/ticker/24hr + /fapi/v1/premiumIndex
     """
     try:
-        # 先尝试 CoinGecko 获取全网 BTC 交易量
-        cg_resp = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price",
-            params={"ids": "bitcoin", "vs_currencies": "usd", "include_24hr_vol": "true"},
+        # 24hr ticker
+        resp = requests.get(
+            "https://fapi.binance.com/fapi/v1/ticker/24hr",
+            params={"symbol": "BTCUSDT"},
             timeout=10
         )
-        if cg_resp.status_code == 200:
-            cg_data = cg_resp.json()
-            total_vol = cg_data["bitcoin"]["usd_24h_vol"]
-            # Binance 合约约占全网 35%
-            return {
-                "lastPrice": cg_data["bitcoin"]["usd"],
-                "volume": 0,
-                "quoteVolume": total_vol * 0.35,  # Binance 估算
-                "priceChangePercent": 0,
-                "openInterest": None,
-            }
+        data = resp.json()
+        quote_volume = float(data.get("quoteVolume", 0))
+
+        # 资金费率
+        funding_rate = None
+        try:
+            fr_resp = requests.get(
+                "https://fapi.binance.com/fapi/v1/premiumIndex",
+                params={"symbol": "BTCUSDT"},
+                timeout=10
+            )
+            if fr_resp.status_code == 200:
+                fr_data = fr_resp.json()
+                funding_rate = float(fr_data.get("lastFundingRate", 0) or 0)
+        except Exception:
+            pass
+
+        return {
+            "lastPrice": float(data.get("lastPrice", 0)),
+            "volume": float(data.get("volume", 0)),
+            "quoteVolume": quote_volume,
+            "priceChangePercent": float(data.get("priceChangePercent", 0)),
+            "openInterest": None,  # Binance 公开 API 不提供 OI
+            "funding_rate": funding_rate,
+        }
     except Exception as e:
-        print(f"Binance futures (CoinGecko fallback) failed: {e}")
-    
-    return {"lastPrice": 0, "volume": 0, "quoteVolume": 0, "priceChangePercent": 0, "openInterest": None}
+        print(f"Binance futures fapi failed: {e}")
+        return {"lastPrice": 0, "volume": 0, "quoteVolume": 0, "priceChangePercent": 0, "openInterest": None, "funding_rate": None}
 
 
 def fetch_binance_klines(interval: str = "1h", limit: int = 24) -> List[Dict]:

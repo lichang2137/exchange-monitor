@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
 import type { ChartData, MarketType, Exchange, ChartEvent } from '../types';
-import { EVENT_TYPE_COLORS, EVENT_TYPE_LABELS } from '../types';
+import { EVENT_TYPE_COLORS } from '../types';
 import dayjs from 'dayjs';
 
 interface PriceChartProps {
@@ -17,7 +17,6 @@ interface PriceChartProps {
   onEventClick: (event: ChartEvent) => void;
 }
 
-// 交易所颜色（固定）
 const EXCHANGE_COLORS: Record<string, string> = {
   binance: '#F0B90B',
   okx: '#1E3A8A',
@@ -26,45 +25,30 @@ const EXCHANGE_COLORS: Record<string, string> = {
   hyperliquid: '#22C55E',
 };
 
-// BTC 颜色（白色/浅灰）
 const BTC_COLOR = '#E6EDF3';
 
-// 事件类型标签
-const EVENT_TYPE_LABELS_LOCAL: Record<string, string> = {
-  announcement: '公告',
-  listing: '上币',
-  delisting: '下币',
-  campaign: '活动',
-  fee_change: '费率调整',
-  product_launch: '产品上线',
-  vip_policy: 'VIP政策',
-  wallet_issue: '钱包问题',
-  compliance: '合规',
-  partnership: '合作',
-  macro: '宏观',
-  social_hype: '社媒热点',
-  product: '产品更新',
-  news: '行业新闻',
-};
+// 成交量格式化 B/M
+function formatVol(val: number | null | undefined): string {
+  if (val == null || val === 0) return '—';
+  if (Math.abs(val) >= 1e9) return `${(val / 1e9).toFixed(1)}B`;
+  if (Math.abs(val) >= 1e6) return `${(val / 1e6).toFixed(1)}M`;
+  if (Math.abs(val) >= 1e3) return `${(val / 1e3).toFixed(0)}K`;
+  return String(val);
+}
 
-// 风险等级颜色
-const RISK_LEVEL_COLORS: Record<string, string> = {
-  low: '#3fb950',
-  medium: '#d29922',
-  high: '#f85149',
-};
+// 成交额格式化（带 USD 单位）
+function formatVolWithUnit(val: number | null | undefined, isEst: boolean = false): string {
+  if (val == null || val === 0) return '—';
+  const unit = isEst ? 'est. ' : '';
+  if (Math.abs(val) >= 1e9) return `${unit}${formatVol(val)} USD`;
+  if (Math.abs(val) >= 1e6) return `${unit}${formatVol(val)} USD`;
+  return `${unit}${formatVol(val)} USD`;
+}
 
-// 风险等级标签
-const RISK_LEVEL_LABELS: Record<string, string> = {
-  low: '低风险',
-  medium: '中风险',
-  high: '高风险',
-};
-
-export function PriceChart({ 
-  data, 
-  loading, 
-  marketType, 
+export function PriceChart({
+  data,
+  loading,
+  marketType,
   selectedExchanges,
   exchanges,
   events,
@@ -75,162 +59,122 @@ export function PriceChart({
   const chartRef = useRef<any>(null);
 
   const getOption = useCallback((): EChartsOption => {
-    if (!data) return {};
+    if (!data || !data.dates || data.dates.length === 0) return {};
 
-    // 时间轴 - 使用 ts 字段
-    const timestamps = data.btc.map(p => 
-      dayjs(p.ts).format('MM-DD HH:mm')
-    );
+    // xAxis 显示标签（MM-DD 格式）
+    const timestamps = data.dates.map(d => dayjs(d).format('MM-DD'));
 
-    // 创建时间到索引的映射
-    const timeToIndexMap = new Map<string, number>();
-    data.btc.forEach((p, idx) => {
-      const timeKey = dayjs(p.ts).format('MM-DD HH');
-      timeToIndexMap.set(timeKey, idx);
+    // 日期到索引映射（d 格式为 YYYY-MM-DD，与 event_date 对齐）
+    const dateToIndexMap = new Map<string, number>();
+    data.dates.forEach((d, idx) => {
+      dateToIndexMap.set(d, idx);
     });
 
-    // BTC 价格数据
-    const btcData = data.btc.map(p => p.value);
-    const maxPrice = Math.max(...btcData);
+    // 日期到 BTC 价格映射（用于事件点 y 坐标）
+    const dateToBtcMap = new Map<string, number>();
+    data.dates.forEach((d, idx) => {
+      const price = data.price['BTC']?.[idx];
+      if (price != null) dateToBtcMap.set(d, price);
+    });
 
-    // 按交易所分组交易量（平滑处理）
+    // BTC 价格 series 数据
+    const btcPrices = data.price['BTC'] || [];
+
+    // 市场类型语义
+    const isSpot = marketType === 'spot';
+    const volData = isSpot ? data.spot_volumes : data.futures_volumes;
+    const volUnit = isSpot ? 'BTC Spot Volume (24h)' : 'BTC Futures Volume (24h)';
+
+    // 数据来源方法
+    const methods = data.volume_methods || {};
+
+    // 交易量 series
+    // - name: "Binance BTC Spot" / "Binance BTC Futures"
+    // - 带 method 信息用于 tooltip
     const volumeSeries: any[] = [];
-    
+
     selectedExchanges.forEach(exchange => {
-      // 按时间顺序构建交易量数组
-      const volMap = new Map<string, number>();
-      data.volumes
-        .filter(v => v.exchange === exchange)
-        .forEach(v => {
-          const timeKey = dayjs(v.ts).format('MM-DD HH');
-          if (v.value > 0) {  // 只记录有效值
-            volMap.set(timeKey, v.value);
-          }
-        });
-      
-      // 与时间轴对齐，缺失值显示为空
-      const volData = timestamps.map(t => {
-        const val = volMap.get(t.split(' ')[0] + ' ' + t.split(' ')[1].substring(0, 2));
-        return val !== undefined ? val : null;  // null 显示为空
-      });
-      
+      const series = volData[exchange] || [];
       const color = EXCHANGE_COLORS[exchange] || '#58a6ff';
-      
+      const marketLabel = isSpot ? 'BTC Spot' : 'BTC Futures';
+      const exchangeLabel = exchange.charAt(0).toUpperCase() + exchange.slice(1);
+      const seriesName = `${exchangeLabel} ${marketLabel}`;
+      const methodKey = `${exchange}_${marketType}`;
+      const isEstimated = (methods[methodKey] || methods[exchange] || '') === 'estimated';
+
       volumeSeries.push({
-        name: exchange.toUpperCase(),
-        type: 'line',
+        name: seriesName,
+        type: 'line' as const,
         yAxisIndex: 1,
-        data: volData,
-        smooth: 0.3,  // 平滑处理
+        data: series,
+        smooth: 0.3,
         lineStyle: { width: 2, color },
         itemStyle: { color },
         symbol: 'none',
-        connectNulls: false,  // 不连接空值
+        connectNulls: false,
         areaStyle: {
           color: {
-            type: 'linear',
+            type: 'linear' as const,
             x: 0, y: 0, x2: 0, y2: 1,
             colorStops: [
               { offset: 0, color: color + '30' },
               { offset: 1, color: color + '05' }
             ]
           }
-        }
+        },
+        // 携带 method 信息供 tooltip 使用
+        _isEstimated: isEstimated,
+        _exchange: exchange,
+        _marketType: marketType,
       });
     });
 
-    // 事件标注点
-    const eventMarkers = events.map(event => {
-      const eventHour = dayjs(event.ts).format('MM-DD HH');
-      let xIndex = timeToIndexMap.get(eventHour);
-      
-      if (xIndex === undefined) {
-        let closestIdx = 0;
-        let minDiff = Infinity;
-        const eventTs = dayjs(event.ts).valueOf();
-        data.btc.forEach((p, idx) => {
-          const diff = Math.abs(eventTs - dayjs(p.ts).valueOf());
-          if (diff < minDiff) {
-            minDiff = diff;
-            closestIdx = idx;
-          }
-        });
-        xIndex = closestIdx;
-      }
-      
-      const color = EXCHANGE_COLORS[event.exchange] || EVENT_TYPE_COLORS[event.event_type] || '#58a6ff';
-      const baseSize = 10;
-      const finalSize = event.id === highlightedEventId ? baseSize * 1.5 : baseSize;
-      
-      return {
-        coord: [xIndex!, maxPrice * 1.08],
-        value: event.id,
-        eventData: event,
-        symbolSize: finalSize,
-        itemStyle: {
-          color: color,
-          borderColor: event.id === highlightedEventId ? '#fff' : 'transparent',
-          borderWidth: event.id === highlightedEventId ? 2 : 0,
-        },
-      };
-    });
+    // ── 事件标注 ──────────────────────────────────────────────
+    const eventMarkPointData = events
+      .filter(e => selectedExchanges.includes(e.exchange))
+      .map(event => {
+        const eventDay = event.event_date || dayjs(event.ts).format('YYYY-MM-DD');
+        const xIndex = dateToIndexMap.get(eventDay);
+        if (xIndex === undefined) return null;
 
-    // 事件系列
-    const eventSeries = {
-      name: 'Events',
-      type: 'scatter',
-      symbolSize: (val: string) => {
-        const size = 10;
-        return val === highlightedEventId ? size * 1.5 : size;
-      },
-      data: eventMarkers,
-      tooltip: {
-        backgroundColor: '#21262d',
-        borderColor: '#30363d',
-        textStyle: { color: '#e6edf3' },
-        formatter: (params: any) => {
-          const event = params.data?.eventData;
-          if (!event) return '';
-          
-          const exColor = EXCHANGE_COLORS[event.exchange] || '#58a6ff';
-          const typeLabel = EVENT_TYPE_LABELS_LOCAL[event.event_type] || event.event_type;
-          const typeColor = EVENT_TYPE_COLORS[event.event_type] || '#58a6ff';
-          
-          // 风险等级（从 title 或 event_type 推断）
-          let riskLevel = 'medium';
-          let riskColor = RISK_LEVEL_COLORS.medium;
-          if (event.event_type === 'wallet_issue' || event.event_type === 'compliance') {
-            riskLevel = 'high';
-            riskColor = RISK_LEVEL_COLORS.high;
-          } else if (event.event_type === 'listing' || event.event_type === 'campaign') {
-            riskLevel = 'low';
-            riskColor = RISK_LEVEL_COLORS.low;
-          }
-          
-          return `
-            <div style="font-size:13px;padding:8px;min-width:200px;">
-              <div style="font-weight:600;margin-bottom:8px;color:#e6edf3;">${event.title}</div>
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-                <span style="width:10px;height:10px;border-radius:50%;background:${exColor};display:inline-block;"></span>
-                <span style="color:#e6edf3;">${event.exchange.toUpperCase()}</span>
-              </div>
-              <div style="display:flex;gap:12px;margin-bottom:6px;">
-                <span style="padding:2px 8px;border-radius:4px;font-size:11px;background:${typeColor}20;color:${typeColor};border:1px solid ${typeColor}40;">
-                  ${typeLabel}
-                </span>
-                <span style="padding:2px 8px;border-radius:4px;font-size:11px;background:${riskColor}20;color:${riskColor};border:1px solid ${riskColor}40;">
-                  ${RISK_LEVEL_LABELS[riskLevel]}
-                </span>
-              </div>
-              <div style="color:#8b949e;font-size:11px;margin-top:6px;">
-                ${dayjs(event.ts).format('MM-DD HH:mm')}
-              </div>
-            </div>
-          `;
-        }
-      },
-      z: 10,
-    };
+        const btcPrice = dateToBtcMap.get(eventDay) || 0;
+        const yCoord = btcPrice * 1.03;
+        const typeColor = EVENT_TYPE_COLORS[event.event_type] || '#58a6ff';
+
+        return {
+          coord: [xIndex, yCoord] as [number, number],
+          eventData: event,
+          symbol: 'circle',
+          symbolSize: event.id === highlightedEventId ? 14 : 10,
+          itemStyle: {
+            color: typeColor,
+            borderColor: event.id === highlightedEventId ? '#fff' : 'transparent',
+            borderWidth: event.id === highlightedEventId ? 2 : 0,
+          },
+          tooltip: {
+            trigger: 'item' as const,
+            backgroundColor: '#21262d',
+            borderColor: '#30363d',
+            textStyle: { color: '#e6edf3' },
+            formatter: (params: any) => {
+              const ev = params.data.eventData;
+              const exColor = EXCHANGE_COLORS[ev.exchange] || '#58a6ff';
+              return `
+                <div style="font-size:12px;padding:8px;min-width:180px;">
+                  <div style="font-weight:600;margin-bottom:6px;color:#e6edf3;">${ev.title}</div>
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                    <span style="width:8px;height:8px;border-radius:50%;background:${exColor};display:inline-block;"></span>
+                    <span style="color:#e6edf3;">${ev.exchange.toUpperCase()}</span>
+                    <span style="color:#8b949e;margin-left:8px;">${dayjs(ev.ts).format('MM-DD HH:mm')}</span>
+                  </div>
+                  <div style="color:#8b949e;font-size:11px;">${ev.event_type}</div>
+                </div>
+              `;
+            }
+          },
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
 
     return {
       backgroundColor: 'transparent',
@@ -242,10 +186,37 @@ export function PriceChart({
         axisPointer: {
           type: 'cross',
           crossStyle: { color: '#8b949e' }
+        },
+        formatter: (params: any[]) => {
+          let result = '';
+          params.forEach(p => {
+            if (!p.value && p.value !== 0) return;
+            let val = p.value;
+            let label = p.seriesName || '';
+            let unit = '';
+            const isBtc = label === 'BTC';
+            const isVolumeSeries = !isBtc && label.includes('BTC');
+
+            if (isBtc) {
+              unit = '$' + (typeof val === 'number' ? val.toLocaleString() : val);
+            } else if (isVolumeSeries) {
+              // 格式: "Binance BTC Spot: 1.1B USD" 或 "Binance BTC Spot: 1.1B est. USD"
+              const isEst = p.data?._isEstimated || false;
+              unit = formatVolWithUnit(val, isEst);
+            } else {
+              unit = formatVol(val);
+            }
+            const dot = p.seriesIndex === 0 ? '' : ' · ';
+            result += `${dot}${label}: <b>${unit}</b><br/>`;
+          });
+          return result || '';
         }
       },
       legend: {
-        data: ['BTC', ...selectedExchanges.map(e => e.toUpperCase())],
+        data: ['BTC', ...selectedExchanges.map(e => {
+          const m = isSpot ? 'BTC Spot' : 'BTC Futures';
+          return `${e.charAt(0).toUpperCase() + e.slice(1)} ${m}`;
+        })],
         textStyle: { color: '#8b949e' },
         top: 10
       },
@@ -269,39 +240,42 @@ export function PriceChart({
           type: 'value',
           name: 'BTC Price (USD)',
           position: 'left',
+          scale: true,
+          min: (value: number) => value.min * 0.98,
+          max: (value: number) => value.max * 1.02,
           axisLine: { lineStyle: { color: BTC_COLOR } },
-          axisLabel: { 
-            color: '#8b949e', 
-            formatter: (value: number) => `$${value.toLocaleString()}` 
+          axisLabel: {
+            color: '#8b949e',
+            formatter: (value: number) => {
+              if (value >= 1e6) return `${(value/1e6).toFixed(1)}M`;
+              if (value >= 1e3) return `${(value/1e3).toFixed(0)}K`;
+              return `$${value.toLocaleString()}`;
+            }
           },
           splitLine: { lineStyle: { color: '#21262d' } }
         },
         {
           type: 'value',
-          name: 'Volume (USDT)',
+          name: volUnit,
           position: 'right',
+          scale: true,
           axisLine: { lineStyle: { color: '#58a6ff' } },
-          axisLabel: { 
-            color: '#8b949e', 
-            formatter: (value: number) => {
-              if (value >= 1e9) return `${(value/1e9).toFixed(1)}B`;
-              if (value >= 1e6) return `${(value/1e6).toFixed(0)}M`;
-              if (value >= 1e3) return `${(value/1e3).toFixed(0)}K`;
-              return `${value}`;
-            } 
+          axisLabel: {
+            color: '#8b949e',
+            formatter: (value: number) => formatVol(value)
           },
           splitLine: { show: false }
         }
       ],
       dataZoom: [
         { type: 'inside', start: 0, end: 100 },
-        { 
-          type: 'slider', 
-          start: 0, 
-          end: 100, 
-          height: 20, 
-          bottom: 40, 
-          borderColor: '#30363d', 
+        {
+          type: 'slider',
+          start: 0,
+          end: 100,
+          height: 20,
+          bottom: 40,
+          borderColor: '#30363d',
           backgroundColor: '#161b22',
           fillerColor: 'rgba(88, 166, 255, 0.2)',
           handleStyle: { color: '#58a6ff' },
@@ -313,27 +287,28 @@ export function PriceChart({
           name: 'BTC',
           type: 'line',
           yAxisIndex: 0,
-          data: btcData,
+          data: btcPrices,
           smooth: 0.3,
           lineStyle: { width: 3, color: BTC_COLOR },
           itemStyle: { color: BTC_COLOR },
-          symbol: 'none'
+          symbol: 'none',
+          markPoint: eventMarkPointData.length > 0 ? {
+            symbol: 'circle',
+            data: eventMarkPointData,
+            tooltip: { trigger: 'item' },
+          } : undefined,
         },
         ...volumeSeries,
-        eventSeries
       ]
     };
-  }, [data, selectedExchanges, events, highlightedEventId]);
+  }, [data, selectedExchanges, marketType, events, highlightedEventId]);
 
-  // 处理图表点击事件
   const handleChartClick = useCallback((params: any) => {
-    if (params.seriesName === 'Events' || params.seriesIndex === selectedExchanges.length + 1) {
-      const eventData = params.data?.eventData;
-      if (eventData) {
-        onEventClick(eventData);
-      }
+    const eventData = params.data?.eventData;
+    if (eventData) {
+      onEventClick(eventData);
     }
-  }, [onEventClick, selectedExchanges.length]);
+  }, [onEventClick]);
 
   if (loading) {
     return (
@@ -345,9 +320,9 @@ export function PriceChart({
 
   return (
     <div className="chart-container">
-      <ReactECharts 
+      <ReactECharts
         ref={chartRef}
-        option={getOption()} 
+        option={getOption()}
         style={{ height: 400 }}
         opts={{ renderer: 'canvas' }}
         onEvents={{ 'click': handleChartClick }}

@@ -7,21 +7,18 @@ const api = axios.create({
 });
 
 export const chartApi = {
+  // 统一图表数据接口 v3：/api/chart-data
   getChartData: async (
-    marketType: MarketType = 'total',
     exchanges?: string[],
-    startTime?: string,
-    endTime?: string
+    days: number = 7
   ): Promise<ChartData> => {
     const params = new URLSearchParams();
-    params.append('market_type', marketType);
     if (exchanges?.length) {
       params.append('exchanges', exchanges.join(','));
     }
-    if (startTime) params.append('start_time', startTime);
-    if (endTime) params.append('end_time', endTime);
-    
-    const { data } = await api.get<ChartData>(`/chart?${params}`);
+    params.append('days', String(days));
+
+    const { data } = await api.get<ChartData>(`/chart-data?${params}`);
     return data;
   },
 };
