@@ -321,6 +321,19 @@ def run_collection():
                 ))
             print(f"    {ex} {mtype}: ${vol/1e6:.1f}M")
         
+        # 同时写入 Dashboard Daily Snapshot
+        print("\n[写入] Dashboard 快照...")
+        date_str = now.strftime("%Y-%m-%d")
+        vol_map = {ex: {"spot": 0, "futures": 0} for ex, _, _ in volumes}
+        for ex, mtype, vol in volumes:
+            vol_map[ex][mtype] = vol
+        for ex in vol_map:
+            spot_v = vol_map[ex]["spot"]
+            fut_v = vol_map[ex]["futures"]
+            if spot_v > 0 or fut_v > 0:
+                write_dashboard_snapshot(db, date_str, ex, spot_v, fut_v, now)
+                print(f"    {ex}: spot=${spot_v/1e6:.1f}M, fut=${fut_v/1e6:.1f}M")
+        
         db.commit()
         print(f"\n[完成] {now.isoformat()}")
         
@@ -330,3 +343,26 @@ def run_collection():
 
 if __name__ == "__main__":
     run_collection()
+
+# ========== 写入 Dashboard Daily Snapshot ==========
+def write_dashboard_snapshot(db, date_str: str, exchange: str, spot_vol: float, fut_vol: float, now: datetime):
+    """写入 Dashboard 每日快照（不存在则创建，存在则更新）"""
+    existing = db.query(models.DashboardDailySnapshot).filter(
+        models.DashboardDailySnapshot.snapshot_date == date_str,
+        models.DashboardDailySnapshot.exchange == exchange
+    ).first()
+    if existing:
+        existing.spot_volume = spot_vol
+        existing.futures_volume = fut_vol
+        existing.total_volume = spot_vol + fut_vol
+        existing.updated_at = now
+    else:
+        db.add(models.DashboardDailySnapshot(
+            snapshot_date=date_str,
+            exchange=exchange,
+            total_volume=spot_vol + fut_vol,
+            spot_volume=spot_vol,
+            futures_volume=fut_vol,
+            event_count=0,
+            high_risk_event_count=0,
+        ))
